@@ -38,22 +38,38 @@ class Settings:
         return not self.allowed_user_ids or user_id in self.allowed_user_ids
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# تنظیمات قابل‌تغییر در حین توسعه/تست MVP.
+# برای عوض کردن مدل یا رفتار، همین مقادیر را اینجا تغییر بده و push کن
+# (روی سرور دستکاری لازم نیست). فقط کلیدهای محرمانه از .env خوانده می‌شوند.
+# ─────────────────────────────────────────────────────────────────────────
+PRIMARY_MODEL = "google/gemini-2.5-flash"
+FALLBACK_MODEL = "google/gemini-2.5-flash-lite"
+LLM_TIMEOUT_SECONDS = 15
+LLM_RETRY_DELAY_SECONDS = 5
+DEFAULT_CURRENCY = "toman"          # toman | rial
+REMINDER_HOUR = 22                  # ساعت یادآوری شبانه (به وقت تهران)
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
 def load_settings() -> Settings:
     raw_ids = _get("ALLOWED_USER_IDS", "") or ""
     allowed = frozenset(
         int(x) for x in raw_ids.replace(" ", "").split(",") if x.strip()
     )
+    # مقادیر بالا پیش‌فرض‌اند؛ در صورت نیاز می‌توان با متغیر محیطی هم‌نام override کرد،
+    # ولی برای ربات شخصی لازم نیست و تغییر در کد کافی است.
     return Settings(
         telegram_bot_token=_get("TELEGRAM_BOT_TOKEN", required=True),
         openrouter_api_key=_get("OPENROUTER_API_KEY", required=True),
-        openrouter_base_url=_get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-        llm_primary_model=_get("LLM_PRIMARY_MODEL", "google/gemini-2.5-flash"),
-        llm_fallback_model=_get("LLM_FALLBACK_MODEL", "google/gemini-2.5-flash-lite"),
-        llm_timeout=int(_get("LLM_TIMEOUT", "15")),
-        llm_retry_delay=int(_get("LLM_RETRY_DELAY", "5")),
+        openrouter_base_url=_get("OPENROUTER_BASE_URL", OPENROUTER_BASE_URL),
+        llm_primary_model=_get("LLM_PRIMARY_MODEL", PRIMARY_MODEL),
+        llm_fallback_model=_get("LLM_FALLBACK_MODEL", FALLBACK_MODEL),
+        llm_timeout=int(_get("LLM_TIMEOUT", str(LLM_TIMEOUT_SECONDS))),
+        llm_retry_delay=int(_get("LLM_RETRY_DELAY", str(LLM_RETRY_DELAY_SECONDS))),
         allowed_user_ids=allowed,
-        default_currency=_get("DEFAULT_CURRENCY", "toman"),
-        reminder_hour=int(_get("REMINDER_HOUR", "22")),
+        default_currency=_get("DEFAULT_CURRENCY", DEFAULT_CURRENCY),
+        reminder_hour=int(_get("REMINDER_HOUR", str(REMINDER_HOUR))),
         db_path=_get("DB_PATH", "data/pocket_cfo.db"),
     )
 

@@ -25,22 +25,17 @@ docker compose version          # باید نسخه را نشان دهد
 mkdir -p ~/pocket-cfo
 ```
 
-حالا فایل `~/pocket-cfo/.env` را بساز (تنها جای نگه‌داری کلیدها) و پرش کن:
+حالا فایل `~/pocket-cfo/.env` را بساز — فقط همین سه کلید محرمانه:
 ```bash
 cat > ~/pocket-cfo/.env <<'EOF'
 TELEGRAM_BOT_TOKEN=توکن_رباتت
 OPENROUTER_API_KEY=کلید_OpenRouter
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-LLM_PRIMARY_MODEL=google/gemini-2.5-flash
-LLM_FALLBACK_MODEL=google/gemini-2.5-flash-lite
-LLM_TIMEOUT=15
-LLM_RETRY_DELAY=5
 ALLOWED_USER_IDS=آی‌دی_عددی_خودت
-DEFAULT_CURRENCY=toman
-REMINDER_HOUR=22
 EOF
 ```
-> `DB_PATH` را اینجا نگذار؛ داکر خودش آن را روی volume پایدار ست می‌کند.
+> بقیه‌ی تنظیمات (مدل‌ها، تایم‌اوت، واحد، ساعت یادآوری) داخل کد در
+> `bot/config.py` هستند؛ برای عوض‌کردنشان کد را ویرایش و push کن، نه سرور را.
+> `DB_PATH` هم لازم نیست؛ داکر خودش روی volume پایدار ست می‌کند.
 
 ## ج) کلید دیپلوی بساز تا Actions بتواند SSH بزند
 روی لپ‌تاپ خودت (نه سرور):
