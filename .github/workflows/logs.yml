@@ -1,0 +1,35 @@
+name: Logs
+
+# اجرای دستی برای دیدن لاگ‌های اجرای ربات روی سرور (دیباگ بدون دسترسی مستقیم)
+on:
+  workflow_dispatch:
+    inputs:
+      tail:
+        description: "تعداد خطوط آخر لاگ"
+        required: false
+        default: "200"
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Fetch container logs
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          TAIL: ${{ github.event.inputs.tail }}
+        run: |
+          ssh -p "${SSH_PORT:-22}" -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" \
+            "cd ~/pocket-cfo && docker compose ps && echo '----- LOGS -----' && docker compose logs --tail=${TAIL:-200} bot"

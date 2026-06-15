@@ -61,6 +61,18 @@ pip install pytest
 pytest
 ```
 
+## دیپلوی روی سرور
+استقرار خودکار با **Docker + GitHub Actions** روی یک VPS خارجی انجام می‌شود (ربات با
+polling کار می‌کند، پس دامنه/HTTPS لازم نیست). راهنمای کامل و یک‌بارهٔ راه‌اندازی در
+[`DEPLOY.md`](DEPLOY.md) است. خلاصه: داکر را روی سرور نصب کن، `.env` را روی سرور بساز،
+سه Secret (`SSH_HOST`/`SSH_USER`/`SSH_KEY`) را در گیت‌هاب بگذار، و یک push بزن.
+
+اجرای محلی با داکر:
+```bash
+cp .env.example .env   # پرش کن
+docker compose up --build
+```
+
 ## یادداشت فنی: ورودی صوتی از طریق OpenRouter
 جمینای ذاتاً ورودی صوتی را پشتیبانی می‌کند، اما پشتیبانی OpenRouter از فرمت
 `ogg/opus` تلگرام باید در عمل تست شود. لایه‌ی `bot/llm/client.py` انتزاعی است؛ در

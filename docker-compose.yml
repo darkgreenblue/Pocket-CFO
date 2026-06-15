@@ -1,0 +1,15 @@
+services:
+  bot:
+    build: .
+    image: pocket-cfo:latest
+    container_name: pocket-cfo
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # دیتابیس روی volume پایدار؛ جدا از مسیر data/ که seed تگ‌ها داخل آن baked شده.
+      - DB_PATH=/app/var/pocket_cfo.db
+    volumes:
+      - pocketcfo-data:/app/var
+
+volumes:
+  pocketcfo-data:

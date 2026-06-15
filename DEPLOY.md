@@ -1,0 +1,89 @@
+# راه‌اندازی و دیپلوی CFO جیبی
+
+این فایل کارهایی است که **یک‌بار برای همیشه** باید انجام دهی. بعد از آن، هر `push`
+به‌صورت خودکار روی سرور دیپلوی می‌شود (GitHub Actions → Docker روی VPS).
+
+مدل کار: ربات با **polling** اجرا می‌شود، پس به دامنه/HTTPS نیازی نیست. کلیدهای
+حساس فقط در فایل `.env` روی سرور می‌مانند و هیچ‌وقت وارد گیت‌هاب نمی‌شوند.
+
+---
+
+## الف) کلیدها را جمع کن
+1. **توکن ربات:** در تلگرام به [@BotFather](https://t.me/BotFather) برو و یک ربات بساز → یک توکن می‌گیری.
+2. **کلید OpenRouter:** از [openrouter.ai/keys](https://openrouter.ai/keys).
+3. **آی‌دی عددی تلگرامت:** از [@userinfobot](https://t.me/userinfobot) (یک عدد مثل `123456789`).
+
+## ب) سرور را آماده کن (VPS خارجی، اوبونتو ۲۲.۰۴+)
+```bash
+ssh user@SERVER_IP
+
+# نصب داکر و پلاگین compose
+curl -fsSL https://get.docker.com | sh
+docker compose version          # باید نسخه را نشان دهد
+
+# دایرکتوری پروژه
+mkdir -p ~/pocket-cfo
+```
+
+حالا فایل `~/pocket-cfo/.env` را بساز (تنها جای نگه‌داری کلیدها) و پرش کن:
+```bash
+cat > ~/pocket-cfo/.env <<'EOF'
+TELEGRAM_BOT_TOKEN=توکن_رباتت
+OPENROUTER_API_KEY=کلید_OpenRouter
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+LLM_PRIMARY_MODEL=google/gemini-2.5-flash
+LLM_FALLBACK_MODEL=google/gemini-2.5-flash-lite
+LLM_TIMEOUT=15
+LLM_RETRY_DELAY=5
+ALLOWED_USER_IDS=آی‌دی_عددی_خودت
+DEFAULT_CURRENCY=toman
+REMINDER_HOUR=22
+EOF
+```
+> `DB_PATH` را اینجا نگذار؛ داکر خودش آن را روی volume پایدار ست می‌کند.
+
+## ج) کلید دیپلوی بساز تا Actions بتواند SSH بزند
+روی لپ‌تاپ خودت (نه سرور):
+```bash
+ssh-keygen -t ed25519 -f deploy_key -N ""
+```
+۱. محتوای **کلید عمومی** (`deploy_key.pub`) را به `~/.ssh/authorized_keys` روی سرور اضافه کن:
+```bash
+ssh-copy-id -i deploy_key.pub user@SERVER_IP
+# یا دستی محتوای deploy_key.pub را در انتهای ~/.ssh/authorized_keys سرور بچسبان
+```
+۲. در گیت‌هاب، در مسیر **Settings → Secrets and variables → Actions** این Secretها را بساز:
+
+| نام Secret | مقدار |
+|---|---|
+| `SSH_HOST` | آی‌پی سرور |
+| `SSH_USER` | یوزر SSH (مثلاً `root`) |
+| `SSH_KEY` | کل محتوای فایل **خصوصی** `deploy_key` |
+| `SSH_PORT` | اختیاری، اگر پورت SSH غیر از ۲۲ است |
+
+> کلیدهای اپ (توکن تلگرام و OpenRouter) را اینجا **نگذار**؛ آن‌ها در `.env` روی سرورند.
+
+## د) اولین دیپلوی
+- یک `push` بزن، یا در تب **Actions** گیت‌هاب، ورک‌فلو **Deploy** را دستی Run کن.
+- وقتی سبز شد، در تلگرام `/start` را بزن و یک ویس تست بفرست. ✅
+
+---
+
+## بعد از این مرحله (کارهای جاری)
+- هر `push` به برنچ توسعه → دیپلوی خودکار.
+- **دیدن لاگ‌ها:** تب Actions → ورک‌فلو **Logs** → Run workflow.
+- **تست‌ها:** ورک‌فلو **CI** روی هر push اجرا می‌شود.
+
+## دستورهای مفید روی سرور
+```bash
+cd ~/pocket-cfo
+docker compose ps            # وضعیت کانتینر
+docker compose logs -f bot   # لاگ زنده
+docker compose restart bot   # ری‌استارت
+docker compose down          # خاموش کردن
+```
+
+## عیب‌یابی سریع
+- **ربات جواب نمی‌دهد:** `docker compose logs bot` را ببین؛ معمولاً توکن یا `.env` اشتباه است.
+- **پیام «سرویس‌های هوش مصنوعی پاسخگو نیستند»:** کلید OpenRouter یا دسترسی شبکه‌ی سرور را چک کن.
+- **یادآوری شبانه نمی‌آید:** `ALLOWED_USER_IDS` باید آی‌دی عددی واقعی‌ات باشد و حداقل یک تراکنش ناقص وجود داشته باشد.
