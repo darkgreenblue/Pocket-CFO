@@ -17,6 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # image را اینجا (با رم فراوان) می‌سازیم تا سرور ۱ گیگی هیچ‌وقت build نکند.
+      - name: Build image
+        run: docker build -t pocket-cfo:latest .
+
+      - name: Save image (gzip)
+        run: docker save pocket-cfo:latest | gzip > image.tar.gz
+
       - name: Setup SSH
         env:
           SSH_KEY: ${{ secrets.SSH_KEY }}
@@ -28,27 +35,27 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Sync source to server
+      - name: Copy compose + image to server
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
         run: |
-          rsync -az --delete \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='.env' \
-            --exclude='__pycache__' \
-            --exclude='.venv' \
-            --exclude='*.db' \
-            -e "ssh -p ${SSH_PORT:-22} -i ~/.ssh/id_deploy" \
-            ./ "$SSH_USER@$SSH_HOST:~/pocket-cfo/"
+          ssh -p "${SSH_PORT:-22}" -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" "mkdir -p ~/pocket-cfo"
+          scp -P "${SSH_PORT:-22}" -i ~/.ssh/id_deploy \
+            docker-compose.yml image.tar.gz "$SSH_USER@$SSH_HOST:~/pocket-cfo/"
 
-      - name: Build & restart container
+      - name: Load image & restart container
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
         run: |
-          ssh -p "${SSH_PORT:-22}" -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" \
-            "cd ~/pocket-cfo && docker compose up -d --build && docker image prune -f"
+          ssh -p "${SSH_PORT:-22}" -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" '
+            set -e
+            cd ~/pocket-cfo
+            docker load -i image.tar.gz
+            docker compose up -d
+            rm -f image.tar.gz
+            docker image prune -f
+          '
