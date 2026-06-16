@@ -13,7 +13,6 @@ from bot.llm.prompts import (
     SYSTEM_PROMPT,
     build_user_instruction,
 )
-from bot.utils.audio import ogg_to_mp3
 
 logger = logging.getLogger(__name__)
 
@@ -63,21 +62,9 @@ async def converse_and_extract(
                 ],
             }]
 
-        async def build_gpt_audio() -> list[dict]:
-            mp3 = await ogg_to_mp3(audio_ogg)
-            b64 = base64.b64encode(mp3).decode("ascii")
-            return base + [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": instruction},
-                    {"type": "input_audio", "input_audio": {"data": b64, "format": "mp3"}},
-                ],
-            }]
-
         attempts = [
             Attempt(settings.llm_primary_model, build_gemini),
             Attempt(settings.llm_primary_model, build_gemini, delay_before=settings.llm_retry_delay),
-            Attempt(settings.llm_audio_fallback_model, build_gpt_audio),
             Attempt(settings.llm_fallback_model, build_gemini),
         ]
     else:
@@ -87,7 +74,6 @@ async def converse_and_extract(
         attempts = [
             Attempt(settings.llm_primary_model, build_text),
             Attempt(settings.llm_primary_model, build_text, delay_before=settings.llm_retry_delay),
-            Attempt(settings.llm_audio_fallback_model, build_text),
             Attempt(settings.llm_fallback_model, build_text),
         ]
 
