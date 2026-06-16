@@ -38,5 +38,22 @@ CREATE TABLE IF NOT EXISTS tag_suggestions (
     reviewed       INTEGER NOT NULL DEFAULT 0
 );
 
+-- پیام‌های مکالمه (حافظه‌ی کوتاه‌مدت برای ادامه‌ی گفتگو)
+CREATE TABLE IF NOT EXISTS messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    role       TEXT NOT NULL,                    -- user | assistant
+    content    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+-- پروفایل بلندمدت کاربر (خلاصه‌ی شناختی که هر شب آپدیت می‌شود)
+CREATE TABLE IF NOT EXISTS user_profile (
+    user_id    INTEGER PRIMARY KEY,
+    profile    TEXT NOT NULL DEFAULT '',
+    updated_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_txn_user_status ON transactions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_txn_created ON transactions(created_at);
+CREATE INDEX IF NOT EXISTS idx_msg_user ON messages(user_id, id);

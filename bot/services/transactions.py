@@ -14,7 +14,7 @@ def create_draft_from_item(user_id: int, item: dict[str, Any], *, transcript: st
         user_id=user_id,
         title=item["title"] or None,
         amount=item["total_amount"],
-        currency_display=settings.default_currency,
+        currency_display=item.get("currency") or settings.default_currency,
         note=item.get("note", ""),
         mentioned_items=item.get("mentioned_items", []),
         needs_later_completion=item.get("needs_later_completion", False),

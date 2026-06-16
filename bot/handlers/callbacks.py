@@ -16,7 +16,6 @@ from bot.flows.draft_flow import (
 )
 from bot.services.reports import build_report
 from bot.services.transactions import is_complete
-from bot.utils.money import other_unit
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +48,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     elif action == "edittitle":
         context.user_data[AWAITING_KEY] = {"action": "title", "txn_id": txn_id}
         await query.message.reply_text("عنوان کوتاه این خرج را بنویس.")
-    elif action == "unit":
-        repo.update_transaction(txn_id, currency_display=other_unit(txn.get("currency_display", "toman")))
-        await _refresh(query, context, txn_id)
     elif action == "details":
         expanded = context.user_data.setdefault(EXPANDED_KEY, set())
         if txn_id in expanded:

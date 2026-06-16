@@ -6,9 +6,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# tzdata برای ZoneInfo("Asia/Tehran") که یادآوری شبانه به آن نیاز دارد
+# tzdata برای ZoneInfo("Asia/Tehran") و ffmpeg برای تبدیل ogg→mp3 در فال‌بک صوتی
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tzdata \
+    && apt-get install -y --no-install-recommends tzdata ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

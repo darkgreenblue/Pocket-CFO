@@ -26,12 +26,18 @@ class Settings:
     openrouter_base_url: str
     llm_primary_model: str
     llm_fallback_model: str
+    llm_audio_fallback_model: str
     llm_timeout: int
     llm_retry_delay: int
+    llm_max_output_tokens: int
     allowed_user_ids: frozenset[int]
     default_currency: str
     reminder_hour: int
     db_path: str
+    max_voice_seconds: int
+    chat_history_turns: int
+    rate_limit_max: int
+    rate_limit_window: int
 
     def is_authorized(self, user_id: int) -> bool:
         # اگر لیست خالی باشد یعنی محدودیتی نگذاشته‌ایم (مناسب اولین راه‌اندازی).
@@ -45,11 +51,17 @@ class Settings:
 # ─────────────────────────────────────────────────────────────────────────
 PRIMARY_MODEL = "google/gemini-2.5-flash"
 FALLBACK_MODEL = "google/gemini-2.5-flash-lite"
+AUDIO_FALLBACK_MODEL = "openai/gpt-4o-mini-audio-preview"  # فقط mp3/wav → نیاز به ffmpeg
 LLM_TIMEOUT_SECONDS = 15
 LLM_RETRY_DELAY_SECONDS = 5
+LLM_MAX_OUTPUT_TOKENS = 1200        # سقف خروجی برای کنترل هزینه
 DEFAULT_CURRENCY = "toman"          # toman | rial
-REMINDER_HOUR = 22                  # ساعت یادآوری شبانه (به وقت تهران)
+REMINDER_HOUR = 22                  # ساعت یادآوری/آپدیت پروفایل شبانه (به وقت تهران)
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+MAX_VOICE_SECONDS = 120             # سقف طول ویس (ضدّ سوزاندن توکن)
+CHAT_HISTORY_TURNS = 8              # تعداد پیام اخیرِ نگه‌داشته‌شده برای مکالمه
+RATE_LIMIT_MAX = 20                 # حداکثر پیام در پنجره‌ی زمانی، per-user
+RATE_LIMIT_WINDOW = 60              # طول پنجره به ثانیه
 
 
 def load_settings() -> Settings:
@@ -65,12 +77,18 @@ def load_settings() -> Settings:
         openrouter_base_url=_get("OPENROUTER_BASE_URL", OPENROUTER_BASE_URL),
         llm_primary_model=_get("LLM_PRIMARY_MODEL", PRIMARY_MODEL),
         llm_fallback_model=_get("LLM_FALLBACK_MODEL", FALLBACK_MODEL),
+        llm_audio_fallback_model=_get("LLM_AUDIO_FALLBACK_MODEL", AUDIO_FALLBACK_MODEL),
         llm_timeout=int(_get("LLM_TIMEOUT", str(LLM_TIMEOUT_SECONDS))),
         llm_retry_delay=int(_get("LLM_RETRY_DELAY", str(LLM_RETRY_DELAY_SECONDS))),
+        llm_max_output_tokens=int(_get("LLM_MAX_OUTPUT_TOKENS", str(LLM_MAX_OUTPUT_TOKENS))),
         allowed_user_ids=allowed,
         default_currency=_get("DEFAULT_CURRENCY", DEFAULT_CURRENCY),
         reminder_hour=int(_get("REMINDER_HOUR", str(REMINDER_HOUR))),
         db_path=_get("DB_PATH", "data/pocket_cfo.db"),
+        max_voice_seconds=int(_get("MAX_VOICE_SECONDS", str(MAX_VOICE_SECONDS))),
+        chat_history_turns=int(_get("CHAT_HISTORY_TURNS", str(CHAT_HISTORY_TURNS))),
+        rate_limit_max=int(_get("RATE_LIMIT_MAX", str(RATE_LIMIT_MAX))),
+        rate_limit_window=int(_get("RATE_LIMIT_WINDOW", str(RATE_LIMIT_WINDOW))),
     )
 
 

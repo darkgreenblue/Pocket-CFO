@@ -1,9 +1,8 @@
-"""کار با مبلغ: نرمال‌سازی ارقام، parse، فرمت با جداکننده و واحد.
+"""کار با مبلغ: نرمال‌سازی ارقام، parse، فرمت با جداکننده و واحد پول.
 
-نکته‌ی واحد: عددی که کاربر تایپ/می‌گوید یک عدد خام است و واحدش (تومان/ریال)
-جداگانه نگهداری می‌شود. دکمه‌ی تغییر واحد فقط برچسب را عوض می‌کند تا اگر ربات
-واحد را اشتباه حدس زد، کاربر بتواند اصلاحش کند. برای گزارش‌ها همه چیز با
-``to_rial`` به ریال تبدیل و جمع می‌شود.
+واحد پول هر تراکنش یک «کد» است (مثل toman/rial/usd/...). اگر کاربر در ویس واحدی
+نگفته باشد، LLM واحد را null برمی‌گرداند و کد، واحد پیش‌فرض تنظیمات را اعمال می‌کند.
+اگر واحدی صریحاً ذکر شده باشد، همان ثبت می‌شود.
 """
 from __future__ import annotations
 
@@ -19,7 +18,17 @@ _DIGIT_MAP = {
 
 _LATIN_TO_PERSIAN = {ord(str(d)): "۰۱۲۳۴۵۶۷۸۹"[d] for d in range(10)}
 
-UNIT_LABELS = {"toman": "تومان", "rial": "ریال"}
+# کدهای شناخته‌شده‌ی واحد پول و برچسب فارسی‌شان
+CURRENCY_LABELS = {
+    "toman": "تومان",
+    "rial": "ریال",
+    "usd": "دلار",
+    "eur": "یورو",
+    "usdt": "تتر",
+    "btc": "بیت‌کوین",
+    "aed": "درهم",
+    "try": "لیر",
+}
 
 
 def normalize_digits(text: str) -> str:
@@ -51,23 +60,31 @@ def group_digits(value: int) -> str:
     return to_persian_digits(grouped)
 
 
-def unit_label(unit: str) -> str:
-    return UNIT_LABELS.get(unit, UNIT_LABELS["toman"])
+def currency_label(currency: str) -> str:
+    """برچسب نمایشی واحد پول؛ اگر ناشناخته بود خودِ کد را نشان می‌دهد."""
+    if not currency:
+        return CURRENCY_LABELS["toman"]
+    return CURRENCY_LABELS.get(currency.lower(), currency)
 
 
-def format_amount(value: Optional[int], unit: str = "toman") -> str:
+def format_amount(value: Optional[int], currency: str = "toman") -> str:
     """مبلغ را به صورت «۲۵۰٬۰۰۰ تومان» برمی‌گرداند."""
     if value is None:
         return "— (تعیین‌نشده)"
-    return f"{group_digits(value)} {unit_label(unit)}"
+    return f"{group_digits(value)} {currency_label(currency)}"
 
 
-def to_rial(value: Optional[int], unit: str) -> int:
-    """مبلغ را برای جمع‌بندی گزارش‌ها به ریال تبدیل می‌کند."""
+def to_rial(value: Optional[int], currency: str) -> int:
+    """مبلغ را برای جمع‌بندی گزارش‌های ریالی تبدیل می‌کند.
+
+    فقط toman/rial قابل تبدیل‌اند؛ واحدهای دیگر (دلار و...) جداگانه حساب می‌شوند
+    و اینجا صفر برمی‌گردانند تا با ریال قاتی نشوند.
+    """
     if value is None:
         return 0
-    return int(value) * 10 if unit == "toman" else int(value)
-
-
-def other_unit(unit: str) -> str:
-    return "rial" if unit == "toman" else "toman"
+    cur = (currency or "toman").lower()
+    if cur == "toman":
+        return int(value) * 10
+    if cur == "rial":
+        return int(value)
+    return 0

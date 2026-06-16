@@ -22,8 +22,8 @@ from bot.config import settings
 from bot.db import repo
 from bot.handlers.callbacks import on_callback
 from bot.handlers.commands import cmd_report, cmd_start
-from bot.handlers.messages import handle_text, handle_voice
-from bot.services.reminders import nightly_reminder
+from bot.handlers.messages import handle_text, handle_unsupported, handle_voice
+from bot.services.reminders import nightly_profile_update, nightly_reminder
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,15 +39,28 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("report", cmd_report))
     app.add_handler(CallbackQueryHandler(on_callback))
-    # ویس اولویت دارد تا قانون «لغو ویرایش هنگام ویس» درست اعمال شود.
-    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
+    # فقط ویس تلگرام پذیرفته می‌شود؛ فایل صوتی/تصویری رد می‌شود.
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(
+        MessageHandler(
+            filters.AUDIO | filters.VIDEO | filters.VIDEO_NOTE | filters.PHOTO | filters.Document.ALL,
+            handle_unsupported,
+        )
+    )
 
     if app.job_queue is not None:
+        # یادآوری تراکنش‌های ناقص
         app.job_queue.run_daily(
             nightly_reminder,
             time=dt.time(hour=settings.reminder_hour, minute=0, tzinfo=_TEHRAN),
             name="nightly_reminder",
+        )
+        # آپدیت پروفایل بلندمدت کاربر از مکالمات روز (کمی دیرتر)
+        app.job_queue.run_daily(
+            nightly_profile_update,
+            time=dt.time(hour=settings.reminder_hour, minute=30, tzinfo=_TEHRAN),
+            name="nightly_profile_update",
         )
     return app
 

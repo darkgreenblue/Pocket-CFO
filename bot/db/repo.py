@@ -192,6 +192,62 @@ def mark_reminded(txn_id: int) -> None:
 
 # ---------- گزارش‌ها ----------
 
+# ---------- حافظه‌ی مکالمه و پروفایل ----------
+
+def add_message(user_id: int, role: str, content: str) -> None:
+    with _conn() as conn:
+        conn.execute(
+            "INSERT INTO messages(user_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, role, content, datetime.now().isoformat()),
+        )
+
+
+def recent_messages(user_id: int, limit: int) -> list[dict[str, Any]]:
+    """آخرین پیام‌ها به ترتیب زمانی صعودی (قدیمی→جدید)."""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT role, content FROM messages WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+    return [dict(r) for r in reversed(rows)]
+
+
+def messages_since(user_id: int, since_iso: str) -> list[dict[str, Any]]:
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT role, content FROM messages WHERE user_id = ? AND created_at >= ? "
+            "ORDER BY id",
+            (user_id, since_iso),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_profile(user_id: int) -> str:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT profile FROM user_profile WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    return row["profile"] if row else ""
+
+
+def set_profile(user_id: int, profile: str) -> None:
+    with _conn() as conn:
+        conn.execute(
+            "INSERT INTO user_profile(user_id, profile, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET profile = excluded.profile, "
+            "updated_at = excluded.updated_at",
+            (user_id, profile, datetime.now().isoformat()),
+        )
+
+
+def users_with_messages_since(since_iso: str) -> list[int]:
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT user_id FROM messages WHERE created_at >= ?", (since_iso,)
+        ).fetchall()
+    return [r["user_id"] for r in rows]
+
+
 def confirmed_in_range(user_id: int, start_iso: str) -> list[dict[str, Any]]:
     with _conn() as conn:
         rows = conn.execute(
