@@ -18,3 +18,7 @@ def allow(user_id: int, max_hits: int, window_seconds: int) -> bool:
         return False
     q.append(now)
     return True
+
+
+def reset(user_id: int) -> None:
+    _hits.pop(user_id, None)

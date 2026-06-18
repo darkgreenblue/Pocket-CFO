@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 from bot.config import settings
 from bot.db import repo
 from bot.flows.draft_flow import AWAITING_KEY, EXPANDED_KEY, render_card
-from bot.handlers.keyboards import BTN_ADD, BTN_REPORT, report_period_keyboard
+from bot.handlers.keyboards import BTN_ADD, BTN_REPORT, BTN_RESET, report_period_keyboard
 from bot.llm import agent
 from bot.llm.client import USER_FACING_UNAVAILABLE, LLMUnavailableError
 from bot.services import memory
@@ -72,6 +72,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     if text == BTN_REPORT:
         await update.message.reply_text("کدوم بازه؟", reply_markup=report_period_keyboard())
+        return
+    if text == BTN_RESET:
+        user_id = update.effective_user.id
+        repo.reset_user(user_id)
+        ratelimit.reset(user_id)
+        context.user_data.clear()
+        await update.message.reply_text(
+            "♻️ همه‌چیز ریست شد — تراکنش‌ها، حافظه، پروفایل و سقف امروز پاک شدند. "
+            "انگار کاربر تازه‌ای 👋"
+        )
         return
 
     awaiting = context.user_data.get(AWAITING_KEY)

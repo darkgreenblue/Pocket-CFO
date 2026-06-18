@@ -223,6 +223,20 @@ def mark_reminded(txn_id: int) -> None:
         conn.execute("UPDATE transactions SET reminded = 1 WHERE id = ?", (txn_id,))
 
 
+def reset_user(user_id: int) -> None:
+    """تمام دیتای کاربر را پاک می‌کند (ابزار موقتِ تست — انگار کاربر جدید)."""
+    with _conn() as conn:
+        conn.execute(
+            "DELETE FROM transaction_tags WHERE transaction_id IN "
+            "(SELECT id FROM transactions WHERE user_id = ?)",
+            (user_id,),
+        )
+        conn.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM messages WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM user_profile WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM tag_suggestions WHERE user_id = ?", (user_id,))
+
+
 def sync_status(txn_id: int) -> str:
     """اگر تراکنش مبلغ و عنوان داشت → confirmed، وگرنه draft. وضعیت نهایی را برمی‌گرداند."""
     with _conn() as conn:

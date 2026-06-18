@@ -10,11 +10,15 @@ from telegram import (
 
 BTN_ADD = "➕ افزودن خرید"
 BTN_REPORT = "📊 گزارش"
+BTN_RESET = "♻️ ریست تست"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [[KeyboardButton(BTN_ADD), KeyboardButton(BTN_REPORT)]],
+        [
+            [KeyboardButton(BTN_ADD), KeyboardButton(BTN_REPORT)],
+            [KeyboardButton(BTN_RESET)],
+        ],
         resize_keyboard=True,
     )
 
