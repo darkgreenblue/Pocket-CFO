@@ -10,13 +10,18 @@ from bot.utils.money import group_digits, to_persian_digits, to_rial
 
 def _start_iso(period: str) -> str:
     now = datetime.now()
+    if period == "today":
+        return now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     delta = timedelta(days=7) if period == "week" else timedelta(days=30)
     return (now - delta).isoformat()
 
 
+_LABELS = {"today": "امروز", "week": "هفته‌ی گذشته", "month": "ماه گذشته"}
+
+
 def build_report(user_id: int, period: str = "month") -> str:
     txns = repo.confirmed_in_range(user_id, _start_iso(period))
-    label = "هفته‌ی گذشته" if period == "week" else "ماه گذشته"
+    label = _LABELS.get(period, "ماه گذشته")
 
     if not txns:
         return f"📊 در {label} هیچ تراکنش ثبت‌شده‌ای نداری."

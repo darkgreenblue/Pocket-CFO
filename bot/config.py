@@ -38,6 +38,9 @@ class Settings:
     chat_history_turns: int
     rate_limit_max: int
     rate_limit_window: int
+    daily_llm_limit: int
+    history_max_messages: int
+    max_tool_rounds: int
 
     def is_authorized(self, user_id: int) -> bool:
         # اگر لیست خالی باشد یعنی محدودیتی نگذاشته‌ایم (مناسب اولین راه‌اندازی).
@@ -60,8 +63,11 @@ REMINDER_HOUR = 22                  # ساعت یادآوری/آپدیت پرو�
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 MAX_VOICE_SECONDS = 120             # سقف طول ویس (ضدّ سوزاندن توکن)
 CHAT_HISTORY_TURNS = 8              # تعداد پیام اخیرِ نگه‌داشته‌شده برای مکالمه
-RATE_LIMIT_MAX = 20                 # حداکثر پیام در پنجره‌ی زمانی، per-user
-RATE_LIMIT_WINDOW = 60              # طول پنجره به ثانیه
+RATE_LIMIT_MAX = 8                  # سقف ضدّ-اسپمِ پیام در پنجره‌ی کوتاه، per-user
+RATE_LIMIT_WINDOW = 30             # طول پنجره به ثانیه
+DAILY_LLM_LIMIT = 20               # سقف پیام‌های روزانه که به LLM می‌روند (مدیریت هزینه)
+HISTORY_MAX_MESSAGES = 50          # سقف پیام‌های حافظه‌ی همان روز که به مدل داده می‌شود
+MAX_TOOL_ROUNDS = 4                # سقف دور‌های tool-calling در هر پیام
 
 
 def load_settings() -> Settings:
@@ -89,6 +95,9 @@ def load_settings() -> Settings:
         chat_history_turns=int(_get("CHAT_HISTORY_TURNS", str(CHAT_HISTORY_TURNS))),
         rate_limit_max=int(_get("RATE_LIMIT_MAX", str(RATE_LIMIT_MAX))),
         rate_limit_window=int(_get("RATE_LIMIT_WINDOW", str(RATE_LIMIT_WINDOW))),
+        daily_llm_limit=int(_get("DAILY_LLM_LIMIT", str(DAILY_LLM_LIMIT))),
+        history_max_messages=int(_get("HISTORY_MAX_MESSAGES", str(HISTORY_MAX_MESSAGES))),
+        max_tool_rounds=int(_get("MAX_TOOL_ROUNDS", str(MAX_TOOL_ROUNDS))),
     )
 
 

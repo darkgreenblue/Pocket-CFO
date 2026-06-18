@@ -31,7 +31,19 @@ def _conn() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with _conn() as conn:
         conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
+        _migrate(conn)
     _seed_tags_if_empty()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """ستون‌های جدید را روی دیتابیس‌های قدیمی اضافه می‌کند (idempotent)."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(transactions)").fetchall()}
+    for col, ddl in (
+        ("card_chat_id", "ALTER TABLE transactions ADD COLUMN card_chat_id INTEGER"),
+        ("card_message_id", "ALTER TABLE transactions ADD COLUMN card_message_id INTEGER"),
+    ):
+        if col not in cols:
+            conn.execute(ddl)
 
 
 def _seed_tags_if_empty() -> None:
@@ -104,21 +116,42 @@ def create_transaction(
     needs_later_completion: bool,
     transcript: str,
     source: str,
+    status: str = "draft",
 ) -> int:
+    now = datetime.now().isoformat()
+    confirmed_at = now if status == "confirmed" else None
     with _conn() as conn:
         cur = conn.execute(
             """INSERT INTO transactions
                (user_id, status, title, amount, currency_display, note,
-                mentioned_items, needs_later_completion, transcript, source, created_at)
-               VALUES (?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                mentioned_items, needs_later_completion, transcript, source,
+                created_at, confirmed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                user_id, title, amount, currency_display, note,
+                user_id, status, title, amount, currency_display, note,
                 json.dumps(mentioned_items, ensure_ascii=False),
                 int(needs_later_completion), transcript, source,
-                datetime.now().isoformat(),
+                now, confirmed_at,
             ),
         )
         return cur.lastrowid
+
+
+def set_card_message(txn_id: int, chat_id: int, message_id: int) -> None:
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE transactions SET card_chat_id = ?, card_message_id = ? WHERE id = ?",
+            (chat_id, message_id, txn_id),
+        )
+
+
+def find_by_card_message(chat_id: int, message_id: int) -> Optional[dict[str, Any]]:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM transactions WHERE card_chat_id = ? AND card_message_id = ?",
+            (chat_id, message_id),
+        ).fetchone()
+    return get_transaction(row["id"]) if row else None
 
 
 def get_transaction(txn_id: int) -> Optional[dict[str, Any]]:
@@ -188,6 +221,57 @@ def pending_for_reminder(user_id: int) -> list[dict[str, Any]]:
 def mark_reminded(txn_id: int) -> None:
     with _conn() as conn:
         conn.execute("UPDATE transactions SET reminded = 1 WHERE id = ?", (txn_id,))
+
+
+def sync_status(txn_id: int) -> str:
+    """اگر تراکنش مبلغ و عنوان داشت → confirmed، وگرنه draft. وضعیت نهایی را برمی‌گرداند."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT title, amount, status FROM transactions WHERE id = ?", (txn_id,)
+        ).fetchone()
+        if not row:
+            return "deleted"
+        complete = row["amount"] is not None and bool((row["title"] or "").strip())
+        new_status = "confirmed" if complete else "draft"
+        if new_status != row["status"]:
+            confirmed_at = datetime.now().isoformat() if new_status == "confirmed" else None
+            conn.execute(
+                "UPDATE transactions SET status = ?, confirmed_at = ? WHERE id = ?",
+                (new_status, confirmed_at, txn_id),
+            )
+    return new_status
+
+
+def list_user_transactions(user_id: int, start_iso: Optional[str] = None,
+                           include_drafts: bool = True) -> list[dict[str, Any]]:
+    q = "SELECT * FROM transactions WHERE user_id = ?"
+    params: list[Any] = [user_id]
+    if not include_drafts:
+        q += " AND status = 'confirmed'"
+    if start_iso:
+        q += " AND created_at >= ?"
+        params.append(start_iso)
+    q += " ORDER BY created_at DESC"
+    with _conn() as conn:
+        rows = conn.execute(q, params).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["mentioned_items"] = json.loads(d.get("mentioned_items") or "[]")
+        d["tags"] = _tags_for(d["id"])
+        out.append(d)
+    return out
+
+
+def count_llm_messages_today(user_id: int, start_iso: str) -> int:
+    """تعداد پیام‌های کاربر (که به LLM رفته) از ابتدای امروز — معیار سقف روزانه."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM messages WHERE user_id = ? AND role = 'user' "
+            "AND created_at >= ?",
+            (user_id, start_iso),
+        ).fetchone()
+    return row["c"]
 
 
 # ---------- گزارش‌ها ----------

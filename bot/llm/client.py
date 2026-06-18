@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 from openai import AsyncOpenAI
 
@@ -85,6 +85,45 @@ async def run_chain(attempts: list[Attempt], *, json_mode: bool = True) -> str:
         except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
             last_error = exc
             logger.warning("تلاش LLM ناموفق (model=%s): %s", attempt.model, exc)
+    raise LLMUnavailableError(str(last_error))
+
+
+def _chat_attempts() -> list[tuple[str, float]]:
+    """(model, delay_before) — فلش، دوباره فلش بعد از وقفه، سپس فلش‌لایت."""
+    return [
+        (settings.llm_primary_model, 0.0),
+        (settings.llm_primary_model, float(settings.llm_retry_delay)),
+        (settings.llm_fallback_model, 0.0),
+    ]
+
+
+async def chat(messages: list[dict], tools: list[dict] | None = None):
+    """یک درخواست chat (با/بدون tools) را با زنجیره‌ی فال‌بک می‌زند و پیام دستیار را برمی‌گرداند.
+
+    خروجی، آبجکت message کامل است (دارای ``content`` و در صورت وجود ``tool_calls``).
+    """
+    client = _get_client()
+    last_error: Exception | None = None
+    for model, delay in _chat_attempts():
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0.2,
+                "max_tokens": settings.llm_max_output_tokens,
+            }
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
+            resp = await asyncio.wait_for(
+                client.chat.completions.create(**kwargs), timeout=settings.llm_timeout
+            )
+            return resp.choices[0].message
+        except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
+            last_error = exc
+            logger.warning("تلاش chat ناموفق (model=%s): %s", model, exc)
     raise LLMUnavailableError(str(last_error))
 
 

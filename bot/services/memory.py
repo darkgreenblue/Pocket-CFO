@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from bot.config import settings
 from bot.db import repo
@@ -15,8 +16,18 @@ from bot.llm.prompts import PROFILE_UPDATE_PROMPT
 logger = logging.getLogger(__name__)
 
 
+def start_of_today_iso() -> str:
+    return datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+
 def history(user_id: int) -> list[dict]:
-    return repo.recent_messages(user_id, settings.chat_history_turns)
+    """حافظه‌ی همان روز (تا سقف پیام)، به ترتیب قدیمی→جدید."""
+    msgs = repo.messages_since(user_id, start_of_today_iso())
+    return msgs[-settings.history_max_messages:]
+
+
+def usage_today(user_id: int) -> int:
+    return repo.count_llm_messages_today(user_id, start_of_today_iso())
 
 
 def remember(user_id: int, role: str, content: str) -> None:

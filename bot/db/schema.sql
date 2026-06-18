@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     reminded               INTEGER NOT NULL DEFAULT 0,
     transcript             TEXT,
     source                 TEXT,                             -- voice | text
+    card_chat_id           INTEGER,
+    card_message_id        INTEGER,
     created_at             TEXT NOT NULL,
     confirmed_at           TEXT
 );

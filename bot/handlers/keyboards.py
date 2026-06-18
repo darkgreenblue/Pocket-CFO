@@ -23,6 +23,7 @@ def report_period_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
+                InlineKeyboardButton("امروز", callback_data="report:today"),
                 InlineKeyboardButton("این هفته", callback_data="report:week"),
                 InlineKeyboardButton("این ماه", callback_data="report:month"),
             ]

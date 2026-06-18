@@ -1,4 +1,4 @@
-"""هندلر دکمه‌های inline (تأیید/ویرایش/واحد/جزئیات/حذف و گزارش)."""
+"""هندلر دکمه‌های inline (ویرایش/جزئیات/حذف و گزارش)."""
 from __future__ import annotations
 
 import logging
@@ -8,14 +8,8 @@ from telegram.ext import ContextTypes
 
 from bot.config import settings
 from bot.db import repo
-from bot.flows.draft_flow import (
-    AWAITING_KEY,
-    EXPANDED_KEY,
-    confirmed_text,
-    render_card,
-)
+from bot.flows.draft_flow import AWAITING_KEY, EXPANDED_KEY, render_card
 from bot.services.reports import build_report
-from bot.services.transactions import is_complete
 
 logger = logging.getLogger(__name__)
 
@@ -27,52 +21,45 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.answer()
         return
 
-    await query.answer()
-    action, _, arg = query.data.partition(":")
+    action, _, arg = (query.data or "").partition(":")
 
     if action == "report":
+        await query.answer()
         await query.edit_message_text(build_report(user.id, period=arg))
         return
 
     txn_id = int(arg)
     txn = repo.get_transaction(txn_id)
     if txn is None:
-        await query.edit_message_text("این تراکنش دیگر وجود ندارد.")
+        await query.answer("این تراکنش دیگر وجود ندارد.", show_alert=True)
         return
 
-    if action == "confirm":
-        await _confirm(query, txn_id)
-    elif action == "editamt":
+    if action == "editamt":
+        await query.answer()
         context.user_data[AWAITING_KEY] = {"action": "amount", "txn_id": txn_id}
-        await query.message.reply_text("مبلغ را فقط به‌صورت رقم بفرست (مثلاً ۲۵۰۰۰۰).")
+        await query.message.reply_text(
+            "مبلغ این خرج را فقط با رقم بفرست (مثلاً ۲۵۰۰۰۰).",
+            reply_to_message_id=query.message.message_id,
+        )
     elif action == "edittitle":
+        await query.answer()
         context.user_data[AWAITING_KEY] = {"action": "title", "txn_id": txn_id}
-        await query.message.reply_text("عنوان کوتاه این خرج را بنویس.")
+        await query.message.reply_text(
+            "عنوان کوتاه این خرج را بنویس.",
+            reply_to_message_id=query.message.message_id,
+        )
     elif action == "details":
+        await query.answer()
         expanded = context.user_data.setdefault(EXPANDED_KEY, set())
         if txn_id in expanded:
             expanded.discard(txn_id)
         else:
             expanded.add(txn_id)
-        await _refresh(query, context, txn_id)
+        text, keyboard = render_card(txn, expanded=txn_id in expanded)
+        await query.edit_message_text(text, reply_markup=keyboard)
     elif action == "delete":
         repo.delete_transaction(txn_id)
+        await query.answer("حذف شد.", show_alert=False)
         await query.edit_message_text("🗑 حذف شد.")
-
-
-async def _confirm(query, txn_id: int) -> None:
-    txn = repo.get_transaction(txn_id)
-    if not is_complete(txn):
-        missing = "عنوان" if not txn.get("title") else "مبلغ"
-        await query.message.reply_text(f"قبل از ثبت، «{missing}» را با دکمه‌ی ویرایش کامل کن.")
-        return
-    repo.confirm_transaction(txn_id)
-    txn = repo.get_transaction(txn_id)
-    await query.edit_message_text(confirmed_text(txn))
-
-
-async def _refresh(query, context: ContextTypes.DEFAULT_TYPE, txn_id: int) -> None:
-    txn = repo.get_transaction(txn_id)
-    expanded = txn_id in context.user_data.get(EXPANDED_KEY, set())
-    text, keyboard = render_card(txn, expanded=expanded)
-    await query.edit_message_text(text, reply_markup=keyboard)
+    else:
+        await query.answer()
