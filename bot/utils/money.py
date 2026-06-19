@@ -60,6 +60,14 @@ def group_digits(value: int) -> str:
     return to_persian_digits(grouped)
 
 
+def _fmt_number(value) -> str:
+    """عدد صحیح یا اعشاری را با جداکننده فارسی فرمت می‌کند (اعشار با ٫)."""
+    if isinstance(value, float) and not value.is_integer():
+        intp, frac = f"{value:,.2f}".split(".")
+        return to_persian_digits(intp.replace(",", "٬") + "٫" + frac)
+    return group_digits(int(value))
+
+
 def currency_label(currency: str) -> str:
     """برچسب نمایشی واحد پول؛ اگر ناشناخته بود خودِ کد را نشان می‌دهد."""
     if not currency:
@@ -67,11 +75,11 @@ def currency_label(currency: str) -> str:
     return CURRENCY_LABELS.get(currency.lower(), currency)
 
 
-def format_amount(value: Optional[int], currency: str = "toman") -> str:
-    """مبلغ را به صورت «۲۵۰٬۰۰۰ تومان» برمی‌گرداند."""
+def format_amount(value, currency: str = "toman") -> str:
+    """مبلغ را به صورت «۲۵۰٬۰۰۰ تومان» یا «۱۲٫۷۳ دلار» برمی‌گرداند."""
     if value is None:
         return "— (تعیین‌نشده)"
-    return f"{group_digits(value)} {currency_label(currency)}"
+    return f"{_fmt_number(value)} {currency_label(currency)}"
 
 
 def to_rial(value: Optional[int], currency: str) -> int:

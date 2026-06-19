@@ -31,8 +31,8 @@ TOOLS_SPEC = [
                 "properties": {
                     "title": {"type": ["string", "null"],
                               "description": "عنوان کوتاه و واقعی. اگر کاربر نگفت null بگذار؛ از خودت «متفرقه» نساز."},
-                    "amount": {"type": ["integer", "null"],
-                               "description": "مبلغ صحیح. اگر گفته نشد null."},
+                    "amount": {"type": ["number", "null"],
+                               "description": "مبلغ. تومان/ریال صحیح؛ ارز خارجی می‌تواند اعشاری باشد (مثل 12.73). اگر گفته نشد null."},
                     "currency": {"type": ["string", "null"], "enum": KNOWN_CURRENCIES + [None],
                                  "description": "فقط اگر کاربر واحد را صریح گفت؛ وگرنه null."},
                     "mentioned_items": {"type": "array", "items": {"type": "string"}},
@@ -56,7 +56,7 @@ TOOLS_SPEC = [
                 "properties": {
                     "transaction_id": {"type": "integer"},
                     "title": {"type": "string"},
-                    "amount": {"type": "integer"},
+                    "amount": {"type": "number"},
                     "currency": {"type": "string", "enum": KNOWN_CURRENCIES},
                     "note": {"type": "string"},
                 },
@@ -112,6 +112,17 @@ def _normalize_currency(value: Any) -> str | None:
     return None
 
 
+def _coerce_amount(value: Any):
+    """عدد را به int تبدیل می‌کند، مگر اعشاری واقعی باشد (ارز خارجی)."""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return int(f) if f.is_integer() else f
+
+
 def dispatch(name: str, args: dict[str, Any], *, user_id: int, effects: dict[str, list]) -> dict[str, Any]:
     """یک tool_call را اجرا می‌کند و نتیجه‌ی قابل‌خواندن برای مدل برمی‌گرداند."""
     try:
@@ -142,8 +153,7 @@ def _record_expense(args: dict, user_id: int, effects: dict) -> dict:
     title = (args.get("title") or "").strip() or None
     if title is None and args.get("title_unimportant"):
         title = "بدون عنوان"
-    amount = args.get("amount")
-    amount = int(amount) if amount is not None else None
+    amount = _coerce_amount(args.get("amount"))
     currency = _normalize_currency(args.get("currency")) or settings.default_currency
     complete = amount is not None and bool(title)
     status = "confirmed" if complete else "draft"
@@ -171,7 +181,7 @@ def _update_transaction(args: dict, user_id: int, effects: dict) -> dict:
     if "title" in args and args["title"]:
         fields["title"] = str(args["title"]).strip()
     if "amount" in args and args["amount"] is not None:
-        fields["amount"] = int(args["amount"])
+        fields["amount"] = _coerce_amount(args["amount"])
     if args.get("currency"):
         cur = _normalize_currency(args["currency"])
         if cur:
