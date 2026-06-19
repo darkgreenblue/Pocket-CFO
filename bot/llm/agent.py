@@ -1,4 +1,8 @@
-"""هسته‌ی مکالمه: رونویسی صوت + حلقه‌ی tool-calling روی دیتای کاربر."""
+"""هسته‌ی مکالمه:
+- رونویسی صوت
+- فاز ۱: استخراج ساختاریافته (پاسخ + تراکنش‌های جدید + ویرایش‌ها) در یک کال JSON
+- فاز ۲ (فقط اگر سؤال دیتایی بود): پاسخ با ابزارهای فقط-خواندنی
+"""
 from __future__ import annotations
 
 import base64
@@ -9,8 +13,9 @@ from typing import Any, Optional
 
 from bot.config import settings
 from bot.llm.client import chat
-from bot.llm.prompts import PROFILE_BLOCK, SYSTEM_PROMPT
+from bot.llm.prompts import EXTRACT_SYSTEM, PROFILE_BLOCK, QUERY_SYSTEM
 from bot.llm.tools import TOOLS_SPEC, dispatch
+from bot.services import transactions as txn_service
 
 logger = logging.getLogger(__name__)
 
@@ -18,13 +23,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AgentResult:
     reply: str
-    transcript: str = ""
     created: list[int] = field(default_factory=list)
     updated: list[int] = field(default_factory=list)
 
 
 async def transcribe(audio_ogg: bytes) -> str:
-    """ویس فارسی را به متن تبدیل می‌کند (یک کال، بدون tool)."""
+    """ویس فارسی را به متن تبدیل می‌کند (یک کال)."""
     b64 = base64.b64encode(audio_ogg).decode("ascii")
     messages = [
         {"role": "system", "content": "تو فقط رونویس هستی. متن کامل گفته‌ی فارسی کاربر را بدون توضیح اضافه برگردان."},
@@ -37,32 +41,31 @@ async def transcribe(audio_ogg: bytes) -> str:
     return (msg.content or "").strip()
 
 
-def _system_message(allowed_tags: list[str], profile: str) -> dict:
-    content = SYSTEM_PROMPT.format(
-        tags="، ".join(allowed_tags),
-        default_currency=settings.default_currency,
-    )
-    if profile.strip():
-        content += PROFILE_BLOCK.format(profile=profile.strip())
-    return {"role": "system", "content": content}
+def _history_messages(history: Optional[list[dict]]) -> list[dict]:
+    out = []
+    for m in history or []:
+        if m.get("role") in ("user", "assistant") and m.get("content"):
+            out.append({"role": m["role"], "content": m["content"]})
+    return out
 
 
-_DEFERRAL_HINTS = ("صبر", "لحظه", "منتظر", "ثبت می", "ثبتشون", "ثبت کنم", "ثبت‌شون", "الان ثبت")
-
-
-def _looks_like_deferral(text: str) -> bool:
-    return bool(text) and any(h in text for h in _DEFERRAL_HINTS)
-
-
-def _serialize_tool_calls(tool_calls) -> list[dict]:
-    return [
-        {
-            "id": tc.id,
-            "type": "function",
-            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-        }
-        for tc in tool_calls
-    ]
+def _loads_lenient(raw: str) -> dict[str, Any]:
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text[:4].lower() == "json":
+            text = text[4:]
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end != -1:
+            try:
+                return json.loads(text[start:end + 1])
+            except json.JSONDecodeError:
+                pass
+    logger.error("نتوانستم خروجی استخراج را parse کنم: %s", (raw or "")[:300])
+    return {"reply": "", "transactions": [], "updates": [], "needs_data": False}
 
 
 async def converse(
@@ -74,60 +77,74 @@ async def converse(
     allowed_tags: Optional[list[str]] = None,
     context_note: str = "",
 ) -> AgentResult:
-    """مکالمه + اجرای ابزارها. ورودی متن است (ویس از قبل رونویسی شده)."""
     allowed_tags = allowed_tags or []
-    messages: list[dict] = [_system_message(allowed_tags, profile)]
-    for m in history or []:
-        if m.get("role") in ("user", "assistant") and m.get("content"):
-            messages.append({"role": m["role"], "content": m["content"]})
+    system = EXTRACT_SYSTEM.format(
+        tags="، ".join(allowed_tags), default_currency=settings.default_currency,
+    )
+    if profile.strip():
+        system += PROFILE_BLOCK.format(profile=profile.strip())
 
-    user_content = user_text
-    if context_note:
-        user_content = f"{context_note}\n\n{user_text}"
+    messages = [{"role": "system", "content": system}]
+    messages += _history_messages(history)
+    user_content = f"{context_note}\n\n{user_text}" if context_note else user_text
     messages.append({"role": "user", "content": user_content})
 
-    effects: dict[str, list] = {"created": [], "updated": []}
-    reply = ""
-    nudged = False
+    # فاز ۱ — استخراج ساختاریافته
+    raw = await chat(messages, json_mode=True)
+    data = _loads_lenient(raw.content or "")
 
-    for _ in range(settings.max_tool_rounds):
+    created: list[int] = []
+    for item in data.get("transactions") or []:
+        try:
+            created.append(txn_service.create_from_item(
+                user_id, item, transcript=user_text, source="chat"))
+        except Exception:  # noqa: BLE001
+            logger.exception("ساخت تراکنش از آیتم استخراج‌شده ناموفق بود")
+
+    updated: list[int] = []
+    for upd in data.get("updates") or []:
+        tid = upd.get("transaction_id")
+        if tid is not None:
+            res = txn_service.apply_update(user_id, int(tid), upd)
+            if res is not None:
+                updated.append(res)
+
+    reply = (data.get("reply") or "").strip()
+
+    # فاز ۲ — فقط اگر سؤال دیتایی بود
+    if data.get("needs_data"):
+        answer = await _answer_data(user_text, history, user_id)
+        if answer:
+            reply = f"{reply}\n\n{answer}".strip() if reply else answer
+
+    return AgentResult(reply=reply or "باشه 🙂", created=created, updated=updated)
+
+
+async def _answer_data(user_text: str, history: Optional[list[dict]], user_id: int) -> str:
+    messages = [{"role": "system", "content": QUERY_SYSTEM}]
+    messages += _history_messages(history)
+    messages.append({"role": "user", "content": user_text})
+
+    for _ in range(3):
         msg = await chat(messages, tools=TOOLS_SPEC)
         tool_calls = getattr(msg, "tool_calls", None)
         if not tool_calls:
-            text = (msg.content or "").strip()
-            # تورِ ایمنی: اگر مدل وعده‌ی ثبت داد ولی ابزاری صدا نزد، یک‌بار وادارش کن.
-            if not nudged and not effects["created"] and _looks_like_deferral(text):
-                nudged = True
-                messages.append({"role": "assistant", "content": text})
-                messages.append({"role": "user", "content": (
-                    "همین حالا و در همین پاسخ، برای هر هزینه‌ی پیام قبلی ابزار "
-                    "record_expense را صدا بزن. هیچ چیز را موکول نکن و «صبر کن» نگو."
-                )})
-                continue
-            reply = text
-            break
+            return (msg.content or "").strip()
         messages.append({
             "role": "assistant",
             "content": msg.content or "",
-            "tool_calls": _serialize_tool_calls(tool_calls),
+            "tool_calls": [
+                {"id": tc.id, "type": "function",
+                 "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                for tc in tool_calls
+            ],
         })
         for tc in tool_calls:
             try:
                 args = json.loads(tc.function.arguments or "{}")
             except json.JSONDecodeError:
                 args = {}
-            result = dispatch(tc.function.name, args, user_id=user_id, effects=effects)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": json.dumps(result, ensure_ascii=False),
-            })
-    else:
-        # سقف دور‌ها پر شد؛ یک پاسخ نهایی بدون ابزار بگیر
-        try:
-            msg = await chat(messages)
-            reply = (msg.content or "").strip()
-        except Exception:  # noqa: BLE001
-            reply = ""
-
-    return AgentResult(reply=reply, created=effects["created"], updated=effects["updated"])
+            result = dispatch(tc.function.name, args, user_id=user_id)
+            messages.append({"role": "tool", "tool_call_id": tc.id,
+                             "content": json.dumps(result, ensure_ascii=False)})
+    return ""

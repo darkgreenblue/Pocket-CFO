@@ -97,11 +97,8 @@ def _chat_attempts() -> list[tuple[str, float]]:
     ]
 
 
-async def chat(messages: list[dict], tools: list[dict] | None = None):
-    """یک درخواست chat (با/بدون tools) را با زنجیره‌ی فال‌بک می‌زند و پیام دستیار را برمی‌گرداند.
-
-    خروجی، آبجکت message کامل است (دارای ``content`` و در صورت وجود ``tool_calls``).
-    """
+async def chat(messages: list[dict], tools: list[dict] | None = None, json_mode: bool = False):
+    """یک درخواست chat را با زنجیره‌ی فال‌بک می‌زند و پیام دستیار را برمی‌گرداند."""
     client = _get_client()
     last_error: Exception | None = None
     for model, delay in _chat_attempts():
@@ -117,6 +114,8 @@ async def chat(messages: list[dict], tools: list[dict] | None = None):
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "auto"
+            if json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
             resp = await asyncio.wait_for(
                 client.chat.completions.create(**kwargs), timeout=settings.llm_timeout
             )
