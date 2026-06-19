@@ -67,7 +67,7 @@ RATE_LIMIT_MAX = 8                  # سقف ضدّ-اسپمِ پیام در پ�
 RATE_LIMIT_WINDOW = 30             # طول پنجره به ثانیه
 DAILY_LLM_LIMIT = 20               # سقف پیام‌های روزانه که به LLM می‌روند (مدیریت هزینه)
 HISTORY_MAX_MESSAGES = 50          # سقف پیام‌های حافظه‌ی همان روز که به مدل داده می‌شود
-MAX_TOOL_ROUNDS = 8                # سقف دور‌های tool-calling در هر پیام (چند هزینه در یک پیام)
+MAX_TOOL_ROUNDS = 12               # سقف دور‌های tool-calling در هر پیام (چند هزینه در یک پیام)
 
 
 def load_settings() -> Settings:

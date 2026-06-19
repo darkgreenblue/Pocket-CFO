@@ -47,6 +47,13 @@ def _system_message(allowed_tags: list[str], profile: str) -> dict:
     return {"role": "system", "content": content}
 
 
+_DEFERRAL_HINTS = ("صبر", "لحظه", "منتظر", "ثبت می", "ثبتشون", "ثبت کنم", "ثبت‌شون", "الان ثبت")
+
+
+def _looks_like_deferral(text: str) -> bool:
+    return bool(text) and any(h in text for h in _DEFERRAL_HINTS)
+
+
 def _serialize_tool_calls(tool_calls) -> list[dict]:
     return [
         {
@@ -81,12 +88,23 @@ async def converse(
 
     effects: dict[str, list] = {"created": [], "updated": []}
     reply = ""
+    nudged = False
 
     for _ in range(settings.max_tool_rounds):
         msg = await chat(messages, tools=TOOLS_SPEC)
         tool_calls = getattr(msg, "tool_calls", None)
         if not tool_calls:
-            reply = (msg.content or "").strip()
+            text = (msg.content or "").strip()
+            # تورِ ایمنی: اگر مدل وعده‌ی ثبت داد ولی ابزاری صدا نزد، یک‌بار وادارش کن.
+            if not nudged and not effects["created"] and _looks_like_deferral(text):
+                nudged = True
+                messages.append({"role": "assistant", "content": text})
+                messages.append({"role": "user", "content": (
+                    "همین حالا و در همین پاسخ، برای هر هزینه‌ی پیام قبلی ابزار "
+                    "record_expense را صدا بزن. هیچ چیز را موکول نکن و «صبر کن» نگو."
+                )})
+                continue
+            reply = text
             break
         messages.append({
             "role": "assistant",
