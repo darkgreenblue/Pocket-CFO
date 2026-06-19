@@ -33,6 +33,7 @@ class Settings:
     allowed_user_ids: frozenset[int]
     default_currency: str
     reminder_hour: int
+    morning_hour: int
     db_path: str
     max_voice_seconds: int
     chat_history_turns: int
@@ -60,6 +61,7 @@ LLM_RETRY_DELAY_SECONDS = 5
 LLM_MAX_OUTPUT_TOKENS = 1200        # سقف خروجی برای کنترل هزینه
 DEFAULT_CURRENCY = "toman"          # toman | rial
 REMINDER_HOUR = 22                  # ساعت یادآوری/آپدیت پروفایل شبانه (به وقت تهران)
+MORNING_HOUR = 10                   # ساعت پردازشِ صفِ پیام‌های بعد-از-ساعت‌کاری (به وقت تهران)
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 MAX_VOICE_SECONDS = 120            # سقف طول ویس (حفاظِ هزینه/تأخیر؛ نه راه‌حلِ کیفیت)
 CHAT_HISTORY_TURNS = 8              # تعداد پیام اخیرِ نگه‌داشته‌شده برای مکالمه
@@ -90,6 +92,7 @@ def load_settings() -> Settings:
         allowed_user_ids=allowed,
         default_currency=_get("DEFAULT_CURRENCY", DEFAULT_CURRENCY),
         reminder_hour=int(_get("REMINDER_HOUR", str(REMINDER_HOUR))),
+        morning_hour=int(_get("MORNING_HOUR", str(MORNING_HOUR))),
         db_path=_get("DB_PATH", "data/pocket_cfo.db"),
         max_voice_seconds=int(_get("MAX_VOICE_SECONDS", str(MAX_VOICE_SECONDS))),
         chat_history_turns=int(_get("CHAT_HISTORY_TURNS", str(CHAT_HISTORY_TURNS))),

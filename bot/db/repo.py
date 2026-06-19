@@ -223,6 +223,43 @@ def mark_reminded(txn_id: int) -> None:
         conn.execute("UPDATE transactions SET reminded = 1 WHERE id = ?", (txn_id,))
 
 
+def add_pending(user_id: int, kind: str, content: str) -> None:
+    if content and content.strip():
+        with _conn() as conn:
+            conn.execute(
+                "INSERT INTO pending_inputs(user_id, kind, content, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (user_id, kind, content.strip(), datetime.now().isoformat()),
+            )
+
+
+def get_pending(user_id: int) -> list[dict[str, Any]]:
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT kind, content FROM pending_inputs WHERE user_id = ? ORDER BY id", (user_id,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def has_pending(user_id: int) -> bool:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM pending_inputs WHERE user_id = ? LIMIT 1", (user_id,)
+        ).fetchone()
+    return row is not None
+
+
+def clear_pending(user_id: int) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM pending_inputs WHERE user_id = ?", (user_id,))
+
+
+def users_with_pending() -> list[int]:
+    with _conn() as conn:
+        rows = conn.execute("SELECT DISTINCT user_id FROM pending_inputs").fetchall()
+    return [r["user_id"] for r in rows]
+
+
 def reset_user(user_id: int) -> None:
     """تمام دیتای کاربر را پاک می‌کند (ابزار موقتِ تست — انگار کاربر جدید)."""
     with _conn() as conn:
@@ -235,6 +272,7 @@ def reset_user(user_id: int) -> None:
         conn.execute("DELETE FROM messages WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM user_profile WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM tag_suggestions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM pending_inputs WHERE user_id = ?", (user_id,))
 
 
 def sync_status(txn_id: int) -> str:

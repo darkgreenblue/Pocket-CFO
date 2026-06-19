@@ -56,6 +56,15 @@ CREATE TABLE IF NOT EXISTS user_profile (
     updated_at TEXT
 );
 
+-- صفِ پیام‌های بعد-از-ساعت‌کاری (متنِ رونویسی‌شده) تا صبح یک‌جا ثبت شوند
+CREATE TABLE IF NOT EXISTS pending_inputs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    kind       TEXT NOT NULL DEFAULT 'text',   -- text | voice
+    content    TEXT NOT NULL,                  -- متن، یا file_id ویس
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_txn_user_status ON transactions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_txn_created ON transactions(created_at);
 CREATE INDEX IF NOT EXISTS idx_msg_user ON messages(user_id, id);

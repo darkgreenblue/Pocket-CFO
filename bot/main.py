@@ -23,6 +23,7 @@ from bot.db import repo
 from bot.handlers.callbacks import on_callback
 from bot.handlers.commands import cmd_report, cmd_start
 from bot.handlers.messages import handle_text, handle_unsupported, handle_voice
+from bot.services.pending import morning_job
 from bot.services.reminders import nightly_profile_update, nightly_reminder
 
 logging.basicConfig(
@@ -61,6 +62,12 @@ def build_application() -> Application:
             nightly_profile_update,
             time=dt.time(hour=settings.reminder_hour, minute=30, tzinfo=_TEHRAN),
             name="nightly_profile_update",
+        )
+        # پردازشِ صبحِ صفِ پیام‌های بعد-از-ساعت‌کاری
+        app.job_queue.run_daily(
+            morning_job,
+            time=dt.time(hour=settings.morning_hour, minute=0, tzinfo=_TEHRAN),
+            name="morning_flush",
         )
     return app
 
