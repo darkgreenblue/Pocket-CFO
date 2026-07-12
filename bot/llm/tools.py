@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from bot.db import repo
+from bot.utils import jalali
 from bot.utils.money import currency_label
 
 TOOLS_SPEC = [
@@ -22,8 +23,9 @@ TOOLS_SPEC = [
                 "type": "object",
                 "properties": {
                     "period": {"type": "string", "enum": ["today", "week", "month", "all"]},
+                    "jalali_month": {"type": "string",
+                                     "description": "نام ماه شمسی مثل «خرداد» برای فیلتر آن ماه (اختیاری)."},
                 },
-                "required": ["period"],
             },
         },
     },
@@ -37,8 +39,9 @@ TOOLS_SPEC = [
                 "type": "object",
                 "properties": {
                     "period": {"type": "string", "enum": ["today", "week", "month"]},
+                    "jalali_month": {"type": "string",
+                                     "description": "نام ماه شمسی مثل «خرداد» برای جمع آن ماه (اختیاری)."},
                 },
-                "required": ["period"],
             },
         },
     },
@@ -101,17 +104,28 @@ def _by_currency(txns: list[dict]) -> dict[str, float]:
     return out
 
 
+def _txns_for(user_id: int, args: dict, include_drafts: bool) -> tuple[str, list[dict]]:
+    """(برچسبِ بازه، تراکنش‌ها) — بر اساس ماه شمسی یا بازه‌ی نسبی."""
+    jm = (args.get("jalali_month") or "").strip()
+    if jm:
+        resolved = jalali.resolve_past_month(jm)
+        if resolved:
+            y, m = resolved
+            return f"{jalali.month_name(m)} {y}", repo.confirmed_in_jmonth(user_id, y, m)
+    period = args.get("period", "today")
+    return period, repo.list_user_transactions(user_id, _start_iso(period),
+                                               include_drafts=include_drafts)
+
+
 def dispatch(name: str, args: dict[str, Any], *, user_id: int) -> dict[str, Any]:
     try:
         if name == "list_transactions":
-            period = args.get("period", "today")
-            txns = repo.list_user_transactions(user_id, _start_iso(period))
-            return {"period": period, "count": len(txns),
+            label, txns = _txns_for(user_id, args, include_drafts=True)
+            return {"period": label, "count": len(txns),
                     "transactions": [_txn_brief(t) for t in txns]}
 
         if name == "get_summary":
-            period = args.get("period", "today")
-            txns = repo.list_user_transactions(user_id, _start_iso(period), include_drafts=False)
+            label, txns = _txns_for(user_id, args, include_drafts=False)
             by_cur = _by_currency(txns)
             cats: dict[str, float] = {}
             for t in txns:
@@ -120,7 +134,7 @@ def dispatch(name: str, args: dict[str, Any], *, user_id: int) -> dict[str, Any]
                 cat = (t.get("tags") or ["بدون دسته"])[0]
                 cats[cat] = cats.get(cat, 0) + t["amount"]
             return {
-                "period": period, "count": len(txns),
+                "period": label, "count": len(txns),
                 "totals_by_currency": {currency_label(c): v for c, v in by_cur.items()},
                 "toman_by_category": dict(sorted(cats.items(), key=lambda x: -x[1])),
                 "note": "ارزها جدا هستند و تبدیل خودکار انجام نشده.",

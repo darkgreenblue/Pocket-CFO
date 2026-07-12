@@ -15,7 +15,9 @@ from bot.config import settings
 from bot.llm.client import chat
 from bot.llm.prompts import EXTRACT_SYSTEM, PROFILE_BLOCK, QUERY_SYSTEM
 from bot.llm.tools import TOOLS_SPEC, dispatch
+from bot.services import goals as goals_service
 from bot.services import transactions as txn_service
+from bot.utils import jalali
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,21 @@ class AgentResult:
     transcript: str = ""
     created: list[int] = field(default_factory=list)
     updated: list[int] = field(default_factory=list)
+    goals_created: list[int] = field(default_factory=list)
+    goals_updated: list[int] = field(default_factory=list)
+
+
+async def transcribe(audio_ogg: bytes) -> str:
+    """فقط رونویسی (برای ویس بلند که بعد وارد خط لوله‌ی چانکینگ می‌شود)."""
+    messages = [
+        {"role": "system", "content": "تو فقط رونویس هستی. متن کامل گفته‌ی فارسی کاربر را بدون توضیح برگردان."},
+        {"role": "user", "content": [
+            {"type": "text", "text": "این پیام صوتی را دقیق رونویسی کن."},
+            _audio_part(audio_ogg),
+        ]},
+    ]
+    msg = await chat(messages)
+    return (msg.content or "").strip()
 
 
 def _audio_part(ogg_bytes: bytes) -> dict:
@@ -71,6 +88,7 @@ async def _run_extraction(
 ) -> AgentResult:
     system = EXTRACT_SYSTEM.format(
         tags="، ".join(allowed_tags), default_currency=settings.default_currency,
+        today=jalali.today_str(),
     )
     if profile.strip():
         system += PROFILE_BLOCK.format(profile=profile.strip())
@@ -94,10 +112,25 @@ async def _run_extraction(
     updated: list[int] = []
     for upd in data.get("updates") or []:
         tid = upd.get("transaction_id")
-        if tid is not None:
+        if tid:
             res = txn_service.apply_update(user_id, int(tid), upd)
             if res is not None:
                 updated.append(res)
+
+    goals_created: list[int] = []
+    for g in data.get("goals") or []:
+        if (g.get("topic") or "").strip() or g.get("limit_amount") is not None:
+            gid = goals_service.create_or_update_from_item(user_id, g)
+            if gid is not None:
+                goals_created.append(gid)
+
+    goals_updated: list[int] = []
+    for gu in data.get("goal_updates") or []:
+        gid = gu.get("goal_id")
+        if gid:
+            res = goals_service.apply_update(user_id, int(gid), gu)
+            if res is not None:
+                goals_updated.append(res)
 
     reply = (data.get("reply") or "").strip()
     transcript = (data.get("transcript") or "").strip()
@@ -109,7 +142,8 @@ async def _run_extraction(
             reply = f"{reply}\n\n{answer}".strip() if reply else answer
 
     return AgentResult(reply=reply or "باشه 🙂", transcript=transcript,
-                       created=created, updated=updated)
+                       created=created, updated=updated,
+                       goals_created=goals_created, goals_updated=goals_updated)
 
 
 async def converse(*, user_text: str, user_id: int, history=None, profile: str = "",
@@ -148,7 +182,7 @@ async def converse_batch(*, text_parts: list[str], audio_blobs: list[bytes], use
 
 
 async def _answer_data(user_text: str, history: Optional[list[dict]], user_id: int) -> str:
-    messages = [{"role": "system", "content": QUERY_SYSTEM}]
+    messages = [{"role": "system", "content": QUERY_SYSTEM.format(today=jalali.today_str())}]
     messages += _history_messages(history)
     messages.append({"role": "user", "content": user_text or "گزارش بده."})
 

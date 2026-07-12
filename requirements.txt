@@ -2,3 +2,4 @@ python-telegram-bot[job-queue]==21.6
 openai>=1.55.3,<2
 python-dotenv==1.0.1
 rapidfuzz==3.10.1
+jdatetime==5.0.0

@@ -37,13 +37,34 @@ def init_db() -> None:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """ستون‌های جدید را روی دیتابیس‌های قدیمی اضافه می‌کند (idempotent)."""
-    cols = {r["name"] for r in conn.execute("PRAGMA table_info(transactions)").fetchall()}
+    txn_cols = {r["name"] for r in conn.execute("PRAGMA table_info(transactions)").fetchall()}
     for col, ddl in (
         ("card_chat_id", "ALTER TABLE transactions ADD COLUMN card_chat_id INTEGER"),
         ("card_message_id", "ALTER TABLE transactions ADD COLUMN card_message_id INTEGER"),
+        ("jyear", "ALTER TABLE transactions ADD COLUMN jyear INTEGER"),
+        ("jmonth", "ALTER TABLE transactions ADD COLUMN jmonth INTEGER"),
     ):
-        if col not in cols:
+        if col not in txn_cols:
             conn.execute(ddl)
+
+    msg_cols = {r["name"] for r in conn.execute("PRAGMA table_info(messages)").fetchall()}
+    if "weight" not in msg_cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN weight INTEGER NOT NULL DEFAULT 1")
+
+    # backfill ماه شمسی برای تراکنش‌های قدیمی از created_at
+    rows = conn.execute(
+        "SELECT id, created_at FROM transactions WHERE jyear IS NULL AND created_at IS NOT NULL"
+    ).fetchall()
+    if rows:
+        import jdatetime
+        for r in rows:
+            try:
+                g = datetime.fromisoformat(r["created_at"]).date()
+                jd = jdatetime.date.fromgregorian(date=g)
+                conn.execute("UPDATE transactions SET jyear = ?, jmonth = ? WHERE id = ?",
+                             (jd.year, jd.month, r["id"]))
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def _seed_tags_if_empty() -> None:
@@ -117,6 +138,8 @@ def create_transaction(
     transcript: str,
     source: str,
     status: str = "draft",
+    jyear: Optional[int] = None,
+    jmonth: Optional[int] = None,
 ) -> int:
     now = datetime.now().isoformat()
     confirmed_at = now if status == "confirmed" else None
@@ -125,13 +148,13 @@ def create_transaction(
             """INSERT INTO transactions
                (user_id, status, title, amount, currency_display, note,
                 mentioned_items, needs_later_completion, transcript, source,
-                created_at, confirmed_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                jyear, jmonth, created_at, confirmed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 user_id, status, title, amount, currency_display, note,
                 json.dumps(mentioned_items, ensure_ascii=False),
                 int(needs_later_completion), transcript, source,
-                now, confirmed_at,
+                jyear, jmonth, now, confirmed_at,
             ),
         )
         return cur.lastrowid
@@ -273,6 +296,7 @@ def reset_user(user_id: int) -> None:
         conn.execute("DELETE FROM user_profile WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM tag_suggestions WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM pending_inputs WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM goals WHERE user_id = ?", (user_id,))
 
 
 def sync_status(txn_id: int) -> str:
@@ -316,11 +340,11 @@ def list_user_transactions(user_id: int, start_iso: Optional[str] = None,
 
 
 def count_llm_messages_today(user_id: int, start_iso: str) -> int:
-    """تعداد پیام‌های کاربر (که به LLM رفته) از ابتدای امروز — معیار سقف روزانه."""
+    """مجموع کوپن‌های مصرف‌شده‌ی امروز (پیام چانک‌شده وزن>۱ دارد) — معیار سقف روزانه."""
     with _conn() as conn:
         row = conn.execute(
-            "SELECT COUNT(*) AS c FROM messages WHERE user_id = ? AND role = 'user' "
-            "AND created_at >= ?",
+            "SELECT COALESCE(SUM(weight), 0) AS c FROM messages WHERE user_id = ? "
+            "AND role = 'user' AND created_at >= ?",
             (user_id, start_iso),
         ).fetchone()
     return row["c"]
@@ -330,11 +354,12 @@ def count_llm_messages_today(user_id: int, start_iso: str) -> int:
 
 # ---------- حافظه‌ی مکالمه و پروفایل ----------
 
-def add_message(user_id: int, role: str, content: str) -> None:
+def add_message(user_id: int, role: str, content: str, weight: int = 1) -> None:
     with _conn() as conn:
         conn.execute(
-            "INSERT INTO messages(user_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-            (user_id, role, content, datetime.now().isoformat()),
+            "INSERT INTO messages(user_id, role, content, weight, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (user_id, role, content, weight, datetime.now().isoformat()),
         )
 
 
@@ -397,3 +422,112 @@ def confirmed_in_range(user_id: int, start_iso: str) -> list[dict[str, Any]]:
         d["tags"] = _tags_for(d["id"])
         out.append(d)
     return out
+
+
+# ---------- تگ‌ها: نوادگان ----------
+
+def tag_descendant_names(tag_id: int) -> set[str]:
+    """نام خودِ تگ + همه‌ی زیرشاخه‌هایش (بازگشتی)."""
+    with _conn() as conn:
+        names: set[str] = set()
+        frontier = [tag_id]
+        while frontier:
+            tid = frontier.pop()
+            row = conn.execute("SELECT name FROM tags WHERE id = ?", (tid,)).fetchone()
+            if row:
+                names.add(row["name"])
+            children = conn.execute("SELECT id FROM tags WHERE parent_id = ?", (tid,)).fetchall()
+            frontier.extend(c["id"] for c in children)
+    return names
+
+
+def confirmed_in_jmonth(user_id: int, jyear: int, jmonth: int) -> list[dict[str, Any]]:
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM transactions WHERE user_id = ? AND status = 'confirmed' "
+            "AND jyear = ? AND jmonth = ?",
+            (user_id, jyear, jmonth),
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["mentioned_items"] = json.loads(d.get("mentioned_items") or "[]")
+        d["tags"] = _tags_for(d["id"])
+        out.append(d)
+    return out
+
+
+# ---------- اهداف مالی ----------
+
+def create_goal(*, user_id: int, topic: Optional[str], tag_id: Optional[int],
+                limit_amount: Optional[int], jyear: int, jmonth: int,
+                note: str = "", status: str = "draft") -> int:
+    with _conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO goals(user_id, status, topic, tag_id, limit_amount, jyear, jmonth, "
+            "note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, status, topic, tag_id, limit_amount, jyear, jmonth, note,
+             datetime.now().isoformat()),
+        )
+        return cur.lastrowid
+
+
+def get_goal(goal_id: int) -> Optional[dict[str, Any]]:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def update_goal(goal_id: int, **fields: Any) -> None:
+    if not fields:
+        return
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    with _conn() as conn:
+        conn.execute(f"UPDATE goals SET {cols} WHERE id = ?", (*fields.values(), goal_id))
+
+
+def delete_goal(goal_id: int) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM goals WHERE id = ?", (goal_id,))
+
+
+def set_goal_card(goal_id: int, chat_id: int, message_id: int) -> None:
+    with _conn() as conn:
+        conn.execute("UPDATE goals SET card_chat_id = ?, card_message_id = ? WHERE id = ?",
+                     (chat_id, message_id, goal_id))
+
+
+def find_goal_by_card_message(chat_id: int, message_id: int) -> Optional[dict[str, Any]]:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM goals WHERE card_chat_id = ? AND card_message_id = ?",
+            (chat_id, message_id),
+        ).fetchone()
+    return get_goal(row["id"]) if row else None
+
+
+def find_goal_by_tag_month(user_id: int, tag_id: Optional[int], topic: Optional[str],
+                           jyear: int, jmonth: int) -> Optional[dict[str, Any]]:
+    """هدفِ همان ماه با همان تگ (یا همان موضوع اگر تگ ندارد) — برای upsert."""
+    with _conn() as conn:
+        if tag_id is not None:
+            row = conn.execute(
+                "SELECT * FROM goals WHERE user_id = ? AND jyear = ? AND jmonth = ? AND tag_id = ?",
+                (user_id, jyear, jmonth, tag_id),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM goals WHERE user_id = ? AND jyear = ? AND jmonth = ? "
+                "AND tag_id IS NULL AND topic = ?",
+                (user_id, jyear, jmonth, topic),
+            ).fetchone()
+    return dict(row) if row else None
+
+
+def active_goals_for_month(user_id: int, jyear: int, jmonth: int) -> list[dict[str, Any]]:
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM goals WHERE user_id = ? AND jyear = ? AND jmonth = ? AND status = 'active'",
+            (user_id, jyear, jmonth),
+        ).fetchall()
+    return [dict(r) for r in rows]

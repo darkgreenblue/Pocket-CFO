@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     source                 TEXT,                             -- voice | text
     card_chat_id           INTEGER,
     card_message_id        INTEGER,
+    jyear                  INTEGER,
+    jmonth                 INTEGER,
     created_at             TEXT NOT NULL,
     confirmed_at           TEXT
 );
@@ -46,7 +48,25 @@ CREATE TABLE IF NOT EXISTS messages (
     user_id    INTEGER NOT NULL,
     role       TEXT NOT NULL,                    -- user | assistant
     content    TEXT NOT NULL,
+    weight     INTEGER NOT NULL DEFAULT 1,       -- تعداد کوپنِ مصرف‌شده (پیام چانک‌شده >1)
     created_at TEXT NOT NULL
+);
+
+-- اهداف مالی (لیمیت ماهانه روی یک موضوع)
+CREATE TABLE IF NOT EXISTS goals (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id          INTEGER NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'draft',   -- draft | active
+    topic            TEXT,
+    tag_id           INTEGER REFERENCES tags(id),
+    limit_amount     INTEGER,                          -- تومان
+    jyear            INTEGER NOT NULL,
+    jmonth           INTEGER NOT NULL,
+    note             TEXT,
+    last_alert_level INTEGER NOT NULL DEFAULT 0,       -- 0 | 50 | 80 | 100
+    card_chat_id     INTEGER,
+    card_message_id  INTEGER,
+    created_at       TEXT NOT NULL
 );
 
 -- پروفایل بلندمدت کاربر (خلاصه‌ی شناختی که هر شب آپدیت می‌شود)

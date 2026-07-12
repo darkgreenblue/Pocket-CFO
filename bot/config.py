@@ -30,6 +30,12 @@ class Settings:
     llm_timeout: int
     llm_retry_delay: int
     llm_max_output_tokens: int
+    chars_per_line: int
+    chunk_2_parts: int
+    chunk_3_parts: int
+    chunk_max_chars: int
+    max_parts: int
+    voice_oneshot_max_seconds: int
     allowed_user_ids: frozenset[int]
     default_currency: str
     reminder_hour: int
@@ -58,7 +64,13 @@ FALLBACK_MODEL = "google/gemini-2.5-flash-lite"
 AUDIO_FALLBACK_MODEL = "openai/gpt-4o-mini-audio-preview"  # فقط mp3/wav → نیاز به ffmpeg
 LLM_TIMEOUT_SECONDS = 15
 LLM_RETRY_DELAY_SECONDS = 5
-LLM_MAX_OUTPUT_TOKENS = 1200        # سقف خروجی برای کنترل هزینه
+LLM_MAX_OUTPUT_TOKENS = 4000        # سقف خروجی (لیست بلندِ تراکنش‌ها نباید بریده شود)
+CHARS_PER_LINE = 60                 # مبنای «خط» برای تصمیم چانکینگ
+CHUNK_2_PARTS = 600                 # >این → ۲ پارت
+CHUNK_3_PARTS = 1200                # >این → ۳ پارت
+CHUNK_MAX_CHARS = 1800              # >این → رد (طولانی‌تر از حد)
+MAX_PARTS = 3
+VOICE_ONESHOT_MAX_SECONDS = 60      # ویس کوتاه‌تر از این → تک‌کال؛ بلندتر → رونویسی‌+چانک
 DEFAULT_CURRENCY = "toman"          # toman | rial
 REMINDER_HOUR = 22                  # ساعت یادآوری/آپدیت پروفایل شبانه (به وقت تهران)
 MORNING_HOUR = 10                   # ساعت پردازشِ صفِ پیام‌های بعد-از-ساعت‌کاری (به وقت تهران)
@@ -89,6 +101,12 @@ def load_settings() -> Settings:
         llm_timeout=int(_get("LLM_TIMEOUT", str(LLM_TIMEOUT_SECONDS))),
         llm_retry_delay=int(_get("LLM_RETRY_DELAY", str(LLM_RETRY_DELAY_SECONDS))),
         llm_max_output_tokens=int(_get("LLM_MAX_OUTPUT_TOKENS", str(LLM_MAX_OUTPUT_TOKENS))),
+        chars_per_line=int(_get("CHARS_PER_LINE", str(CHARS_PER_LINE))),
+        chunk_2_parts=int(_get("CHUNK_2_PARTS", str(CHUNK_2_PARTS))),
+        chunk_3_parts=int(_get("CHUNK_3_PARTS", str(CHUNK_3_PARTS))),
+        chunk_max_chars=int(_get("CHUNK_MAX_CHARS", str(CHUNK_MAX_CHARS))),
+        max_parts=int(_get("MAX_PARTS", str(MAX_PARTS))),
+        voice_oneshot_max_seconds=int(_get("VOICE_ONESHOT_MAX_SECONDS", str(VOICE_ONESHOT_MAX_SECONDS))),
         allowed_user_ids=allowed,
         default_currency=_get("DEFAULT_CURRENCY", DEFAULT_CURRENCY),
         reminder_hour=int(_get("REMINDER_HOUR", str(REMINDER_HOUR))),

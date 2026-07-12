@@ -6,6 +6,7 @@ from typing import Any, Optional
 from bot.config import settings
 from bot.db import repo
 from bot.services import tags as tags_service
+from bot.utils import jalali
 
 KNOWN_CURRENCIES = {"toman", "rial", "usd", "eur", "usdt", "btc", "aed", "try"}
 
@@ -52,12 +53,17 @@ def create_from_item(user_id: int, item: dict[str, Any], *, transcript: str = ""
     complete = amount is not None and bool(title)
     status = "confirmed" if complete else "draft"
 
+    # ماه شمسی: عادی = ماهِ جاری؛ اگر کاربر به ماهِ گذشته اشاره کرد → همان ماه.
+    past = jalali.resolve_past_month(item.get("past_month") or "")
+    jyear, jmonth = past if past else jalali.current_ym()
+
     txn_id = repo.create_transaction(
         user_id=user_id, title=title, amount=amount, currency_display=currency,
         note=(item.get("note") or "").strip(),
         mentioned_items=[str(x) for x in (item.get("mentioned_items") or [])],
         needs_later_completion=bool(item.get("needs_later_completion", False)),
         transcript=transcript, source=source, status=status,
+        jyear=jyear, jmonth=jmonth,
     )
     _apply_tags(txn_id, item.get("suggested_tags") or [], user_id)
     return txn_id

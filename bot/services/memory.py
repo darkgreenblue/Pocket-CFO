@@ -30,9 +30,9 @@ def usage_today(user_id: int) -> int:
     return repo.count_llm_messages_today(user_id, start_of_today_iso())
 
 
-def remember(user_id: int, role: str, content: str) -> None:
+def remember(user_id: int, role: str, content: str, weight: int = 1) -> None:
     if content and content.strip():
-        repo.add_message(user_id, role, content.strip())
+        repo.add_message(user_id, role, content.strip(), weight=weight)
 
 
 def profile(user_id: int) -> str:
