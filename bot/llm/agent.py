@@ -181,6 +181,11 @@ async def converse_batch(*, text_parts: list[str], audio_blobs: list[bytes], use
                                  history=history, profile=profile, allowed_tags=allowed_tags or [])
 
 
+async def answer_data(user_text: str, history: Optional[list[dict]], user_id: int) -> str:
+    """پاسخ به سؤالِ دیتاییِ کاربر با ابزارهای فقط-خواندنی (نقطه‌ی ورودِ عمومی برای روتر)."""
+    return await _answer_data(user_text, history, user_id)
+
+
 async def _answer_data(user_text: str, history: Optional[list[dict]], user_id: int) -> str:
     messages = [{"role": "system", "content": QUERY_SYSTEM.format(today=jalali.today_str())}]
     messages += _history_messages(history)

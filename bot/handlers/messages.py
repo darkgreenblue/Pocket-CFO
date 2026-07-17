@@ -12,7 +12,7 @@ from bot.db import repo
 from bot.flows.draft_flow import AWAITING_KEY
 from bot.handlers.cards import refresh_card, refresh_goal_card, send_card, send_goal_card
 from bot.handlers.keyboards import BTN_ADD, BTN_REPORT, BTN_RESET, report_period_keyboard
-from bot.llm import agent
+from bot.llm import agent, router
 from bot.llm.client import USER_FACING_UNAVAILABLE, LLMUnavailableError
 from bot.llm.splitter import decide_parts, split_text
 from bot.services import goals as goals_service
@@ -23,6 +23,8 @@ from bot.utils.money import format_amount, parse_amount
 
 TOO_LONG_MSG = "این پیام خیلی طولانیه و کامل پردازش نمی‌شه 🙏 لطفاً کوتاه‌تر و در چند پیام بفرست."
 MULTIPART_REPLY = "همه رو ثبت کردم؛ کارت‌ها پایین 👇"
+RECORD_REPLY = "ثبت شد ✅"
+FALLBACK_REPLY = "متوجه نشدم دقیقاً چی می‌خوای 🙂 می‌تونی یه خرج بگی، گزارش بخوای، یا سؤال مالی بپرسی."
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +156,56 @@ async def _text_pipeline(text: str, context_note: str, user_id: int) -> tuple[li
     return results, len(parts)
 
 
+async def _emit(update: Update, context: ContextTypes.DEFAULT_TYPE, *, results: list,
+                weight: int, user_mem: str, used: int, override_reply: str | None,
+                data_answer: str) -> None:
+    """نتیجه‌ی یک ثبت را می‌فرستد: متنِ پاسخ + کارت‌ها + ارزیابیِ اهداف."""
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    created, updated, gcreated, gupdated = [], [], [], []
+    for r in results:
+        created += r.created
+        updated += r.updated
+        gcreated += r.goals_created
+        gupdated += r.goals_updated
+
+    memory.remember(user_id, "user", user_mem, weight=weight)
+    if override_reply:
+        reply = override_reply
+    elif weight > 1:
+        reply = MULTIPART_REPLY
+    else:
+        cand = (results[0].reply or "").strip() if results else ""
+        reply = cand if cand and cand not in ("باشه", "باشه 🙂") else RECORD_REPLY
+    if data_answer:
+        reply = f"{reply}\n\n{data_answer}".strip()
+    notice = _threshold_notice(used, used + weight)
+    if notice:
+        reply = f"{reply}\n\n{notice}"
+    await update.message.reply_text(reply)
+    memory.remember(user_id, "assistant", reply)
+
+    shown: set[int] = set()
+    for tid in created:
+        await send_card(context.bot, chat_id, tid)
+        shown.add(tid)
+    for tid in updated:
+        if tid not in shown:
+            await refresh_card(context.bot, chat_id, tid)
+    gshown: set[int] = set()
+    for gid in gcreated:
+        await send_goal_card(context.bot, chat_id, gid)
+        gshown.add(gid)
+    for gid in gupdated:
+        if gid not in gshown:
+            await refresh_goal_card(context.bot, chat_id, gid)
+
+    # بعد از هر تغییرِ مؤثر، هدف‌ها را ارزیابی و در صورت لزوم آلارم بده.
+    if created or updated or gcreated or gupdated:
+        await goals_service.evaluate_and_alert(context.bot, user_id)
+
+
 async def _process(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
                    user_text: str | None = None, audio_file_id: str | None = None,
                    voice_duration: int = 0, context_note: str = "") -> None:
@@ -179,28 +231,61 @@ async def _process(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
     used = memory.usage_today(user_id)
     status_msg = await update.message.reply_text("🧠 …")
     try:
-        # ویس کوتاه → تک‌کال؛ ویس بلند → رونویسی و سپس خط لوله‌ی متن.
-        if audio_file_id and voice_duration <= settings.voice_oneshot_max_seconds:
+        hist = memory.history(user_id)
+        short_voice = bool(audio_file_id) and voice_duration <= settings.voice_oneshot_max_seconds
+
+        # مرحله‌ی ۱ — آماده‌سازیِ متن.
+        # ویسِ کوتاه یک کالِ استخراج می‌خورد؛ اگر چیزی ثبت شد همان کافی است (بدون روتر).
+        if short_voice:
             tg_file = await context.bot.get_file(audio_file_id)
             blob = bytes(await tg_file.download_as_bytearray())
             r = await agent.converse_audio(
-                audio_ogg=blob, user_id=user_id, history=memory.history(user_id),
+                audio_ogg=blob, user_id=user_id, history=hist,
                 profile=memory.profile(user_id),
                 allowed_tags=tags_service.allowed_tag_names(repo.get_tags()),
                 context_note=context_note,
             )
-            results, weight, user_mem = [r], 1, (r.transcript or "(ویس)")
+            text = (r.transcript or "").strip()
+            if r.created or r.updated or r.goals_created or r.goals_updated:
+                await status_msg.delete()
+                await _emit(update, context, results=[r], weight=1,
+                            user_mem=text or "(ویس)", used=used,
+                            override_reply=None, data_answer="")
+                return
+            # ویس چیزی ثبت نکرد → احتمالاً سؤال یا گفتگو بود؛ با روتر ادامه بده.
         else:
             if audio_file_id:
                 tg_file = await context.bot.get_file(audio_file_id)
                 blob = bytes(await tg_file.download_as_bytearray())
                 user_text = await agent.transcribe(blob)
             text = (user_text or "").strip()
-            if decide_parts(text) == -1:
-                await status_msg.edit_text(TOO_LONG_MSG)
-                return
-            results, weight = await _text_pipeline(text, context_note, user_id)
-            user_mem = text or "(ویس)"
+
+        # مرحله‌ی ۲ — نیت‌خوانیِ ارزان.
+        decision = await router.route(text=text, history=hist, reply_note=context_note)
+        data_answer = ""
+        if decision.data_query:
+            data_answer = await agent.answer_data(text, hist, user_id)
+
+        # مسیرِ گفتگو/گزارش (بدون ثبت): همین‌جا جواب بده، بدون کارت.
+        if not decision.record:
+            await status_msg.delete()
+            reply = decision.reply
+            if data_answer:
+                reply = f"{reply}\n\n{data_answer}".strip() if reply else data_answer
+            reply = reply or FALLBACK_REPLY
+            notice = _threshold_notice(used, used + 1)
+            if notice:
+                reply = f"{reply}\n\n{notice}"
+            memory.remember(user_id, "user", text or "(ویس)", weight=1)
+            await update.message.reply_text(reply)
+            memory.remember(user_id, "assistant", reply)
+            return
+
+        # مسیرِ ثبت/ویرایش/هدف (در صورت لزوم چانک می‌شود).
+        if decide_parts(text) == -1:
+            await status_msg.edit_text(TOO_LONG_MSG)
+            return
+        results, weight = await _text_pipeline(text, context_note, user_id)
     except LLMUnavailableError:
         await status_msg.edit_text(USER_FACING_UNAVAILABLE)
         return
@@ -210,40 +295,10 @@ async def _process(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
         return
 
     await status_msg.delete()
-
-    created, updated, gcreated, gupdated = [], [], [], []
-    for r in results:
-        created += r.created
-        updated += r.updated
-        gcreated += r.goals_created
-        gupdated += r.goals_updated
-
-    memory.remember(user_id, "user", user_mem, weight=weight)
-    reply = MULTIPART_REPLY if weight > 1 else (results[0].reply if results else "باشه 🙂")
-    notice = _threshold_notice(used, used + weight)
-    if notice:
-        reply = f"{reply}\n\n{notice}"
-    await update.message.reply_text(reply)
-    memory.remember(user_id, "assistant", reply)
-
-    shown: set[int] = set()
-    for tid in created:
-        await send_card(context.bot, chat_id, tid)
-        shown.add(tid)
-    for tid in updated:
-        if tid not in shown:
-            await refresh_card(context.bot, chat_id, tid)
-    gshown: set[int] = set()
-    for gid in gcreated:
-        await send_goal_card(context.bot, chat_id, gid)
-        gshown.add(gid)
-    for gid in gupdated:
-        if gid not in gshown:
-            await refresh_goal_card(context.bot, chat_id, gid)
-
-    # بعد از هر تغییرِ مؤثر، هدف‌ها را ارزیابی و در صورت لزوم آلارم بده.
-    if created or updated or gcreated or gupdated:
-        await goals_service.evaluate_and_alert(context.bot, user_id)
+    override = decision.reply or (MULTIPART_REPLY if weight > 1 else None)
+    await _emit(update, context, results=results, weight=weight,
+                user_mem=text or "(ویس)", used=used,
+                override_reply=override, data_answer=data_answer)
 
 
 # ---------- ویرایش دکمه‌ای ----------
