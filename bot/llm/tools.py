@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from bot.db import repo
+from bot.services import tags as tags_service
 from bot.utils import jalali
 from bot.utils.money import currency_label
 
@@ -18,13 +19,18 @@ TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "list_transactions",
-            "description": "فهرست تراکنش‌های کاربر در یک بازه (برای «امروز چی ثبت کردم؟»، بررسی ثبت تکراری و…).",
+            "description": ("فهرستِ تک‌تکِ تراکنش‌های کاربر در یک بازه — برای «امروز چی ثبت کردم؟»، "
+                            "بررسی ثبت تکراری، و «جزئیات/لیستِ یک دسته» (مثلاً همه‌ی خرج‌های «هدیه»ی "
+                            "خرداد). برای دیدنِ ریزِ یک دسته، پارامتر category را بده."),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "period": {"type": "string", "enum": ["today", "week", "month", "all"]},
                     "jalali_month": {"type": "string",
                                      "description": "نام ماه شمسی مثل «خرداد» برای فیلتر آن ماه (اختیاری)."},
+                    "category": {"type": "string",
+                                 "description": ("نام دسته/تگ برای فیلترِ ریزِ همان دسته (مثل «هدیه» یا "
+                                                 "«رستوران»). زیرشاخه‌ها هم شامل می‌شوند. اختیاری.")},
                 },
             },
         },
@@ -104,6 +110,28 @@ def _by_currency(txns: list[dict]) -> dict[str, float]:
     return out
 
 
+def _filter_by_category(txns: list[dict], category: str) -> list[dict]:
+    """فقط تراکنش‌هایی که به دسته/تگِ خواسته‌شده (و زیرشاخه‌هایش) می‌خورند.
+
+    مثل موتور اهداف: اول تگ را تطبیق می‌دهیم و بر اساس نام‌های زیرشاخه فیلتر می‌کنیم؛
+    اگر تگ تطبیق نخورد، به تطبیقِ متنی روی عنوان/تگ برمی‌گردیم.
+    """
+    category = (category or "").strip()
+    if not category:
+        return txns
+    ids, _, _ = tags_service.reconcile([category], repo.get_tags())
+    if ids:
+        names = repo.tag_descendant_names(ids[0])
+        return [t for t in txns if set(t.get("tags") or []) & names]
+    norm = tags_service.normalize(category)
+    out = []
+    for t in txns:
+        hay = tags_service.normalize((t.get("title") or "") + " " + " ".join(t.get("tags") or []))
+        if norm and norm in hay:
+            out.append(t)
+    return out
+
+
 def _txns_for(user_id: int, args: dict, include_drafts: bool) -> tuple[str, list[dict]]:
     """(برچسبِ بازه، تراکنش‌ها) — بر اساس ماه شمسی یا بازه‌ی نسبی."""
     jm = (args.get("jalali_month") or "").strip()
@@ -121,8 +149,16 @@ def dispatch(name: str, args: dict[str, Any], *, user_id: int) -> dict[str, Any]
     try:
         if name == "list_transactions":
             label, txns = _txns_for(user_id, args, include_drafts=True)
-            return {"period": label, "count": len(txns),
-                    "transactions": [_txn_brief(t) for t in txns]}
+            category = (args.get("category") or "").strip()
+            if category:
+                txns = _filter_by_category(txns, category)
+            out = {"period": label, "count": len(txns),
+                   "transactions": [_txn_brief(t) for t in txns]}
+            if category:
+                out["category"] = category
+                out["totals_by_currency"] = {
+                    currency_label(c): v for c, v in _by_currency(txns).items()}
+            return out
 
         if name == "get_summary":
             label, txns = _txns_for(user_id, args, include_drafts=False)
