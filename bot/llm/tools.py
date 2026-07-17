@@ -14,6 +14,12 @@ from bot.services import tags as tags_service
 from bot.utils import jalali
 from bot.utils.money import currency_label
 
+# برچسبِ مجازیِ «تراکنش‌های بدونِ تگ». تگِ واقعی نیست؛ هم در get_summary و هم در
+# فیلترِ دسته باید یکسان تفسیر شود، وگرنه «دیتیلِ بدون‌دسته» چیزی پیدا نمی‌کند.
+UNCATEGORIZED = "بدون دسته"
+_UNCATEGORIZED_ALIASES = {"بدون دسته", "بی دسته", "بدون دسته بندی",
+                          "دسته بندی نشده", "بدون تگ", "متفرقه"}
+
 TOOLS_SPEC = [
     {
         "type": "function",
@@ -30,7 +36,8 @@ TOOLS_SPEC = [
                                      "description": "نام ماه شمسی مثل «خرداد» برای فیلتر آن ماه (اختیاری)."},
                     "category": {"type": "string",
                                  "description": ("نام دسته/تگ برای فیلترِ ریزِ همان دسته (مثل «هدیه» یا "
-                                                 "«رستوران»). زیرشاخه‌ها هم شامل می‌شوند. اختیاری.")},
+                                                 "«رستوران»). زیرشاخه‌ها هم شامل می‌شوند. برای دیدنِ "
+                                                 "تراکنش‌های بدونِ تگ، «بدون دسته» را بده. اختیاری.")},
                 },
             },
         },
@@ -119,6 +126,9 @@ def _filter_by_category(txns: list[dict], category: str) -> list[dict]:
     category = (category or "").strip()
     if not category:
         return txns
+    # «بدون دسته» = تراکنش‌های بدونِ هیچ تگ (برچسبِ مجازی، نه تگِ واقعی).
+    if tags_service.normalize(category) in {tags_service.normalize(a) for a in _UNCATEGORIZED_ALIASES}:
+        return [t for t in txns if not (t.get("tags") or [])]
     ids, _, _ = tags_service.reconcile([category], repo.get_tags())
     if ids:
         names = repo.tag_descendant_names(ids[0])
@@ -167,7 +177,7 @@ def dispatch(name: str, args: dict[str, Any], *, user_id: int) -> dict[str, Any]
             for t in txns:
                 if t.get("currency_display", "toman") != "toman" or t.get("amount") is None:
                     continue
-                cat = (t.get("tags") or ["بدون دسته"])[0]
+                cat = (t.get("tags") or [UNCATEGORIZED])[0]
                 cats[cat] = cats.get(cat, 0) + t["amount"]
             return {
                 "period": label, "count": len(txns),
