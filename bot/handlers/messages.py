@@ -255,7 +255,6 @@ async def _process(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
                    user_text: str | None = None, audio_file_id: str | None = None,
                    voice_duration: int = 0, context_note: str = "") -> None:
     user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
 
     # اگر صفی از قبل مانده و امروز هنوز سهمیه داریم، اول صف را یکپارچه ثبت کن.
     if repo.has_pending(user_id) and memory.usage_today(user_id) < settings.daily_llm_limit:

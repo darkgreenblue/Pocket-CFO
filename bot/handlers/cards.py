@@ -41,8 +41,8 @@ async def _send(bot, chat_id: int, text: str, keyboard):
     return await bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
 
 
-async def _edit_or_send(bot, chat_id: int, row: dict[str, Any], text: str, keyboard,
-                        send_again) -> None:
+async def _edit_or_send(bot, row: dict[str, Any], text: str, keyboard, send_again) -> None:
+    """کارت را همان‌جا ویرایش می‌کند؛ اگر پیامِ قبلی در دسترس نبود، کارتِ تازه می‌فرستد."""
     if row.get("card_message_id") and row.get("card_chat_id"):
         try:
             await bot.edit_message_text(
@@ -71,8 +71,7 @@ async def refresh_card(bot, chat_id: int, txn_id: int, expanded: bool = False) -
     if txn is None:
         return
     text, keyboard = render_txn(txn, expanded=expanded)
-    await _edit_or_send(bot, chat_id, txn, text, keyboard,
-                        lambda: send_card(bot, chat_id, txn_id))
+    await _edit_or_send(bot, txn, text, keyboard, lambda: send_card(bot, chat_id, txn_id))
 
 
 # ---------- هدف ----------
@@ -91,7 +90,7 @@ async def refresh_goal_card(bot, chat_id: int, goal_id: int, expanded: bool = Fa
     if goal is None:
         return
     text, keyboard = render_goal(goal, expanded=expanded)
-    await _edit_or_send(bot, chat_id, goal, text, keyboard,
+    await _edit_or_send(bot, goal, text, keyboard,
                         lambda: send_goal_card(bot, chat_id, goal_id))
 
 
@@ -111,5 +110,5 @@ async def refresh_debt_card(bot, chat_id: int, debt_id: int, expanded: bool = Fa
     if debt is None:
         return
     text, keyboard = render_debt(debt, expanded=expanded)
-    await _edit_or_send(bot, chat_id, debt, text, keyboard,
+    await _edit_or_send(bot, debt, text, keyboard,
                         lambda: send_debt_card(bot, chat_id, debt_id))
