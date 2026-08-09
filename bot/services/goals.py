@@ -2,6 +2,9 @@
 
 محاسبه‌ی مصرف کاملاً سیستمی است (بدون LLM). فقط تومان/ریال در ردیابیِ هدف حساب
 می‌شوند؛ ارز خارجی فعلاً کنار گذاشته می‌شود.
+
+هدف متعلق به **خانوار** است، نه به یک نفر: هر خرجِ مرتبطِ هر عضو در همان لیمیت حساب
+می‌شود و آلارم‌ها برای همه‌ی اعضا فرستاده می‌شوند.
 """
 from __future__ import annotations
 
@@ -9,6 +12,7 @@ import logging
 from typing import Any, Optional
 
 from bot.db import repo
+from bot.services import household as household_service
 from bot.services import tags as tags_service
 from bot.utils import jalali
 from bot.utils.money import group_digits, to_rial
@@ -43,6 +47,8 @@ def _match_tag_id(topic: str) -> Optional[int]:
 
 def create_or_update_from_item(user_id: int, item: dict[str, Any]) -> Optional[int]:
     """هدف را از آیتم استخراج‌شده می‌سازد یا (اگر همان ماه/تگ باشد) به‌روزرسانی می‌کند."""
+    if not household_service.can_set_goals(user_id):
+        return None
     topic = (item.get("topic") or "").strip() or None
     limit_amount = _limit_int(item.get("limit_amount"))
     tag_id = _match_tag_id(topic) if topic else None
@@ -72,7 +78,10 @@ def create_or_update_from_item(user_id: int, item: dict[str, Any]) -> Optional[i
 
 def apply_update(user_id: int, goal_id: int, item: dict[str, Any]) -> Optional[int]:
     goal = repo.get_goal(goal_id)
-    if not goal or goal.get("user_id") != user_id:
+    # هدف مالِ خانوار است: هر عضوی که اجازه‌ی هدف‌گذاری دارد می‌تواند اصلاحش کند.
+    if not goal or goal.get("household_id") != repo.household_id_for(user_id):
+        return None
+    if not household_service.can_set_goals(user_id):
         return None
     fields: dict[str, Any] = {}
     if item.get("topic"):
@@ -129,23 +138,32 @@ def _level_for(pct: float) -> int:
 
 
 async def evaluate_and_alert(bot, user_id: int) -> None:
-    """بعد از هر تغییرِ مؤثر صدا زده می‌شود؛ فقط بالاترین آستانه‌ی تازه‌عبورکرده را آلارم می‌دهد."""
+    """بعد از هر تغییرِ مؤثر صدا زده می‌شود؛ فقط بالاترین آستانه‌ی تازه‌عبورکرده را آلارم می‌دهد.
+
+    هدف مشترک است، پس آلارم برای **همه‌ی اعضای خانوار** فرستاده می‌شود.
+    """
     jyear, jmonth = jalali.current_ym()
+    recipients = household_service.member_ids(user_id) or [user_id]
     for goal in repo.active_goals_for_month(user_id, jyear, jmonth):
         limit = goal.get("limit_amount") or 0
         if limit <= 0:
             continue
         spent = spent_toman(user_id, goal)
         level = _level_for(spent / limit * 100)
-        if level > (goal.get("last_alert_level") or 0):
-            text = _ALERTS[level].format(
-                topic=goal.get("topic") or "این دسته",
-                month=jalali.month_name(jmonth),
-                end=jalali.month_end_str(jyear, jmonth),
-                spent=group_digits(spent), limit=group_digits(limit),
-            )
+        if level <= (goal.get("last_alert_level") or 0):
+            continue
+        text = _ALERTS[level].format(
+            topic=goal.get("topic") or "این دسته",
+            month=jalali.month_name(jmonth),
+            end=jalali.month_end_str(jyear, jmonth),
+            spent=group_digits(spent), limit=group_digits(limit),
+        )
+        delivered = False
+        for member_id in recipients:
             try:
-                await bot.send_message(chat_id=user_id, text=text)
-                repo.update_goal(goal["id"], last_alert_level=level)
+                await bot.send_message(chat_id=member_id, text=text)
+                delivered = True
             except Exception:  # noqa: BLE001
-                logger.warning("ارسال آلارم هدف %s ناموفق بود", goal["id"])
+                logger.warning("ارسال آلارم هدف %s به %s ناموفق بود", goal["id"], member_id)
+        if delivered:
+            repo.update_goal(goal["id"], last_alert_level=level)

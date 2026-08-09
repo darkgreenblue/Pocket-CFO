@@ -21,7 +21,7 @@ from telegram.ext import (
 from bot.config import settings
 from bot.db import repo
 from bot.handlers.callbacks import on_callback
-from bot.handlers.commands import cmd_report, cmd_start
+from bot.handlers.commands import cmd_household, cmd_report, cmd_start
 from bot.handlers.messages import handle_text, handle_unsupported, handle_voice
 from bot.services.pending import morning_job
 from bot.services.reminders import nightly_profile_update, nightly_reminder
@@ -39,6 +39,7 @@ def build_application() -> Application:
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("report", cmd_report))
+    app.add_handler(CommandHandler("household", cmd_household))
     app.add_handler(CallbackQueryHandler(on_callback))
     # فقط ویس تلگرام پذیرفته می‌شود؛ فایل صوتی/تصویری رد می‌شود.
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))

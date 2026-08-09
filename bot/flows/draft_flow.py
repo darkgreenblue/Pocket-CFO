@@ -7,7 +7,7 @@ State ویرایشِ دکمه‌ای در ``context.user_data["awaiting"]`` = {"
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -21,7 +21,8 @@ TITLE_EMOJI = "📝"
 AMOUNT_EMOJI = "💰"
 
 
-def render_card(txn: dict[str, Any], *, expanded: bool = False) -> tuple[str, InlineKeyboardMarkup]:
+def render_card(txn: dict[str, Any], *, expanded: bool = False,
+                recorder_name: Optional[str] = None) -> tuple[str, InlineKeyboardMarkup]:
     title = (txn.get("title") or "").strip() or "— (نامشخص)"
     amount = format_amount(txn.get("amount"), txn.get("currency_display", "toman"))
 
@@ -36,6 +37,9 @@ def render_card(txn: dict[str, Any], *, expanded: bool = False) -> tuple[str, In
             lines.append("🏷 " + "، ".join(tags))
         if txn.get("note"):
             lines.append("🗒 " + txn["note"])
+
+    if recorder_name:
+        lines.append(f"👤 ثبت‌کننده: {recorder_name}")
 
     if not is_complete(txn):
         missing = "عنوان و مبلغ" if (not txn.get("title") and txn.get("amount") is None) else \

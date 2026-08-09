@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 
 from bot.db import repo
-from bot.handlers.cards import send_card, send_goal_card
+from bot.handlers.cards import send_card, send_debt_card, send_goal_card
 from bot.llm import agent
 from bot.services import goals
 from bot.services import memory
@@ -65,6 +65,8 @@ async def flush_pending(bot, user_id: int) -> bool:
     )
     for tid in result.created:
         await send_card(bot, user_id, tid)
+    for did in result.debts_created:
+        await send_debt_card(bot, user_id, did)
     for gid in result.goals_created:
         await send_goal_card(bot, user_id, gid)
     if result.created or result.updated or result.goals_created or result.goals_updated:

@@ -10,16 +10,32 @@ from telegram.ext import ContextTypes
 from bot.config import settings
 from bot.db import repo
 from bot.flows.draft_flow import AWAITING_KEY
-from bot.handlers.cards import refresh_card, refresh_goal_card, send_card, send_goal_card
-from bot.handlers.keyboards import BTN_ADD, BTN_REPORT, BTN_RESET, report_period_keyboard
+from bot.handlers.cards import (
+    refresh_card,
+    refresh_debt_card,
+    refresh_goal_card,
+    send_card,
+    send_debt_card,
+    send_goal_card,
+)
+from bot.handlers.keyboards import (
+    BTN_ADD,
+    BTN_HOUSEHOLD,
+    BTN_REPORT,
+    BTN_RESET,
+    relation_keyboard,
+    report_period_keyboard,
+)
 from bot.llm import agent, router
 from bot.llm.client import USER_FACING_UNAVAILABLE, LLMUnavailableError
 from bot.llm.splitter import decide_parts, split_text
+from bot.services import debts as debts_service
 from bot.services import goals as goals_service
+from bot.services import household as household_service
 from bot.services import memory, pending
 from bot.services import tags as tags_service
 from bot.utils import ratelimit
-from bot.utils.money import format_amount, parse_amount
+from bot.utils.money import parse_amount
 
 TOO_LONG_MSG = "این پیام خیلی طولانیه و کامل پردازش نمی‌شه 🙏 لطفاً کوتاه‌تر و در چند پیام بفرست."
 MULTIPART_REPLY = "همه رو ثبت کردم؛ کارت‌ها پایین 👇"
@@ -37,8 +53,13 @@ OFF_HOURS_MSG = (
 
 
 def _authorized(update: Update) -> bool:
+    """مجاز است اگر خودش در تنظیمات باشد، یا با لینکِ دعوت عضو خانوار شده باشد."""
     user = update.effective_user
-    return bool(user) and settings.is_authorized(user.id)
+    if not user or not household_service.authorized(user.id):
+        return False
+    # نامِ نمایشی را تازه نگه می‌داریم تا گزارشِ «چه کسی ثبت کرده» درست باشد.
+    household_service.touch(user.id, (getattr(user, "full_name", None) or "").strip())
+    return True
 
 
 def _rate_limited(user_id: int) -> bool:
@@ -60,6 +81,10 @@ def _reply_context(update: Update) -> str:
     goal = repo.find_goal_by_card_message(update.effective_chat.id, r.message_id)
     if goal:
         parts.append(f"(این کارتِ هدف #{goal['id']} است؛ برای اصلاحش از goal_updates استفاده کن.)")
+    debt = repo.find_debt_by_card_message(update.effective_chat.id, r.message_id)
+    if debt:
+        parts.append(f"(این کارتِ بدهی/طلب #{debt['id']} است؛ برای اصلاح یا تسویه‌اش از "
+                     "debt_updates استفاده کن.)")
     return " ".join(parts)
 
 
@@ -85,14 +110,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if text == BTN_REPORT:
         await update.message.reply_text("کدوم بازه؟", reply_markup=report_period_keyboard())
         return
+    if text == BTN_HOUSEHOLD:
+        await update.message.reply_text(
+            "می‌خوای چه کسی رو به خانوارت اضافه کنی؟ اول نسبتش رو انتخاب کن:",
+            reply_markup=relation_keyboard(),
+        )
+        return
     if text == BTN_RESET:
         uid = update.effective_user.id
         repo.reset_user(uid)
         ratelimit.reset(uid)
         context.user_data.clear()
         await update.message.reply_text(
-            "♻️ همه‌چیز ریست شد — تراکنش‌ها، حافظه، پروفایل، صف و سقف امروز پاک شدند. "
-            "انگار کاربر تازه‌ای 👋"
+            "♻️ همه‌چیز ریست شد — تراکنش‌ها، بدهی/طلب‌ها، اهداف، حافظه، پروفایل، صف، "
+            "عضویتِ خانوار و سقف امروز پاک شدند. انگار کاربر تازه‌ای 👋"
         )
         return
 
@@ -164,11 +195,15 @@ async def _emit(update: Update, context: ContextTypes.DEFAULT_TYPE, *, results: 
     user_id = update.effective_user.id
 
     created, updated, gcreated, gupdated = [], [], [], []
+    dcreated, dupdated, notes = [], [], []
     for r in results:
         created += r.created
         updated += r.updated
         gcreated += r.goals_created
         gupdated += r.goals_updated
+        dcreated += r.debts_created
+        dupdated += r.debts_updated
+        notes += [n for n in r.notes if n not in notes]
 
     memory.remember(user_id, "user", user_mem, weight=weight)
     if override_reply:
@@ -180,6 +215,8 @@ async def _emit(update: Update, context: ContextTypes.DEFAULT_TYPE, *, results: 
         reply = cand if cand and cand not in ("باشه", "باشه 🙂") else RECORD_REPLY
     if data_answer:
         reply = f"{reply}\n\n{data_answer}".strip()
+    for note in notes:
+        reply = f"{reply}\n\n{note}".strip()
     notice = _threshold_notice(used, used + weight)
     if notice:
         reply = f"{reply}\n\n{notice}"
@@ -193,6 +230,14 @@ async def _emit(update: Update, context: ContextTypes.DEFAULT_TYPE, *, results: 
     for tid in updated:
         if tid not in shown:
             await refresh_card(context.bot, chat_id, tid)
+    dshown: set[int] = set()
+    for did in dcreated:
+        await send_debt_card(context.bot, chat_id, did)
+        dshown.add(did)
+    for did in dupdated:
+        if did not in dshown:
+            await refresh_debt_card(context.bot, chat_id, did)
+
     gshown: set[int] = set()
     for gid in gcreated:
         await send_goal_card(context.bot, chat_id, gid)
@@ -246,7 +291,8 @@ async def _process(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
                 context_note=context_note,
             )
             text = (r.transcript or "").strip()
-            if r.created or r.updated or r.goals_created or r.goals_updated:
+            if (r.created or r.updated or r.goals_created or r.goals_updated
+                    or r.debts_created or r.debts_updated):
                 await status_msg.delete()
                 await _emit(update, context, results=[r], weight=1,
                             user_mem=text or "(ویس)", used=used,
@@ -308,6 +354,24 @@ async def _apply_button_edit(update: Update, context: ContextTypes.DEFAULT_TYPE,
     kind = awaiting.get("kind", "txn")
     obj_id = awaiting["id"]
     chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    if kind == "debt":
+        if repo.get_debt(obj_id) is None:
+            context.user_data.pop(AWAITING_KEY, None)
+            await update.message.reply_text("این مورد دیگر وجود ندارد.")
+            return
+        if awaiting["action"] == "amount":
+            value = parse_amount(text)
+            if value is None:
+                await update.message.reply_text("عدد معتبر نبود. فقط رقم بفرست (مثلاً ۵۰۰۰۰۰).")
+                return
+            debts_service.apply_update(user_id, obj_id, {"amount": value})
+        else:  # counterparty
+            debts_service.apply_update(user_id, obj_id, {"counterparty": text.strip()})
+        context.user_data.pop(AWAITING_KEY, None)
+        await refresh_debt_card(context.bot, chat_id, obj_id)
+        return
 
     if kind == "goal":
         if repo.get_goal(obj_id) is None:
