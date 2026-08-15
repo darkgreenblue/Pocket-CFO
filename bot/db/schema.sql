@@ -149,7 +149,9 @@ CREATE TABLE IF NOT EXISTS debts (
 
 CREATE INDEX IF NOT EXISTS idx_txn_user_status ON transactions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_txn_created ON transactions(created_at);
-CREATE INDEX IF NOT EXISTS idx_txn_household ON transactions(household_id, status);
 CREATE INDEX IF NOT EXISTS idx_msg_user ON messages(user_id, id);
-CREATE INDEX IF NOT EXISTS idx_goal_household ON goals(household_id, jyear, jmonth);
 CREATE INDEX IF NOT EXISTS idx_debt_household ON debts(household_id, status);
+
+-- ⚠️ ایندکسِ ستون‌هایی که با ALTER TABLE اضافه می‌شوند (household_id روی transactions و
+-- goals) اینجا نمی‌آید: این فایل قبل از مهاجرت اجرا می‌شود و روی دیتابیسِ موجود، ستون
+-- هنوز ساخته نشده است. آن‌ها در _migrate() و بعد از ALTER ساخته می‌شوند.
