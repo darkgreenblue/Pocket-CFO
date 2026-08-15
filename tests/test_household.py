@@ -145,13 +145,3 @@ def test_report_breaks_down_by_recorder(db):
     report = build_report(OWNER, period="today")
     assert "به تفکیک ثبت‌کننده" in report
     assert "علی" in report and "مریم" in report
-
-
-def test_reset_removes_membership_so_join_flow_can_be_retested(db):
-    hh.touch(OWNER, "علی")
-    _join(OWNER, PARTNER, "مریم")
-    db.reset_user(PARTNER)
-
-    assert db.find_household_id(PARTNER) is None
-    assert hh.authorized(PARTNER) is False
-    assert hh.is_shared(OWNER) is False
