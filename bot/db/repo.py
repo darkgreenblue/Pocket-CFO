@@ -59,6 +59,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "household_id" not in goal_cols:
         conn.execute("ALTER TABLE goals ADD COLUMN household_id INTEGER")
 
+    # ایندکس‌های household_id فقط بعد از ALTER بالا ساخته می‌شوند؛ در schema.sql نمی‌آیند
+    # چون آن فایل روی دیتابیسِ موجود، پیش از افزوده‌شدنِ ستون اجرا می‌شود.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_txn_household "
+                 "ON transactions(household_id, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_goal_household "
+                 "ON goals(household_id, jyear, jmonth)")
+
     # backfill ماه شمسی برای تراکنش‌های قدیمی از created_at
     rows = conn.execute(
         "SELECT id, created_at FROM transactions WHERE jyear IS NULL AND created_at IS NOT NULL"
