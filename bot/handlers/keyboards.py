@@ -13,7 +13,6 @@ from bot.services.household import RELATIONS
 BTN_ADD = "➕ افزودن خرید"
 BTN_REPORT = "📊 گزارش"
 BTN_HOUSEHOLD = "👨‍👩‍👧 افزودن عضو به خانوار"
-BTN_RESET = "♻️ ریست تست"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -21,7 +20,6 @@ def main_menu() -> ReplyKeyboardMarkup:
         [
             [KeyboardButton(BTN_ADD), KeyboardButton(BTN_REPORT)],
             [KeyboardButton(BTN_HOUSEHOLD)],
-            [KeyboardButton(BTN_RESET)],
         ],
         resize_keyboard=True,
     )

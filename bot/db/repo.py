@@ -479,42 +479,6 @@ def users_with_pending() -> list[int]:
     return [r["user_id"] for r in rows]
 
 
-def reset_user(user_id: int) -> None:
-    """تمام دیتای کاربر را پاک می‌کند (ابزار موقتِ تست — انگار کاربر جدید).
-
-    دیتای مالیِ ثبت‌شده توسط خودِ او پاک می‌شود؛ عضویتش در خانوار هم برداشته می‌شود تا
-    فرآیندِ دعوت از نو قابل تست باشد. اگر خانوار خالی بماند، خودِ خانوار هم حذف می‌شود.
-    """
-    with _conn() as conn:
-        conn.execute(
-            "DELETE FROM transaction_tags WHERE transaction_id IN "
-            "(SELECT id FROM transactions WHERE user_id = ?)",
-            (user_id,),
-        )
-        conn.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
-        conn.execute("DELETE FROM messages WHERE user_id = ?", (user_id,))
-        conn.execute("DELETE FROM user_profile WHERE user_id = ?", (user_id,))
-        conn.execute("DELETE FROM tag_suggestions WHERE user_id = ?", (user_id,))
-        conn.execute("DELETE FROM pending_inputs WHERE user_id = ?", (user_id,))
-        conn.execute("DELETE FROM goals WHERE user_id = ?", (user_id,))
-        conn.execute("DELETE FROM debts WHERE user_id = ?", (user_id,))
-
-        row = conn.execute(
-            "SELECT household_id FROM household_members WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        if not row:
-            return
-        hid = row["household_id"]
-        conn.execute("DELETE FROM household_members WHERE user_id = ?", (user_id,))
-        conn.execute("DELETE FROM household_invites WHERE created_by = ?", (user_id,))
-        others = conn.execute(
-            "SELECT 1 FROM household_members WHERE household_id = ? LIMIT 1", (hid,)
-        ).fetchone()
-        if not others:
-            conn.execute("DELETE FROM household_invites WHERE household_id = ?", (hid,))
-            conn.execute("DELETE FROM households WHERE id = ?", (hid,))
-
-
 def sync_status(txn_id: int) -> str:
     """اگر تراکنش مبلغ و عنوان داشت → confirmed، وگرنه draft. وضعیت نهایی را برمی‌گرداند."""
     with _conn() as conn:

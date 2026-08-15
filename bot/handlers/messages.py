@@ -22,7 +22,6 @@ from bot.handlers.keyboards import (
     BTN_ADD,
     BTN_HOUSEHOLD,
     BTN_REPORT,
-    BTN_RESET,
     relation_keyboard,
     report_period_keyboard,
 )
@@ -116,17 +115,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             reply_markup=relation_keyboard(),
         )
         return
-    if text == BTN_RESET:
-        uid = update.effective_user.id
-        repo.reset_user(uid)
-        ratelimit.reset(uid)
-        context.user_data.clear()
-        await update.message.reply_text(
-            "♻️ همه‌چیز ریست شد — تراکنش‌ها، بدهی/طلب‌ها، اهداف، حافظه، پروفایل، صف، "
-            "عضویتِ خانوار و سقف امروز پاک شدند. انگار کاربر تازه‌ای 👋"
-        )
-        return
-
     awaiting = context.user_data.get(AWAITING_KEY)
     if awaiting:
         await _apply_button_edit(update, context, awaiting, text)
