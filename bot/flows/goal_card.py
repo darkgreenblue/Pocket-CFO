@@ -1,7 +1,7 @@
 """رندر کارت هدف مالی (بودجه‌ی ماهانه). مشابه کارت تراکنش، بدون دکمه‌ی تأیید."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -10,7 +10,8 @@ from bot.utils import jalali
 from bot.utils.money import group_digits
 
 
-def render_goal_card(goal: dict[str, Any], *, expanded: bool = False) -> tuple[str, InlineKeyboardMarkup]:
+def render_goal_card(goal: dict[str, Any], *, expanded: bool = False,
+                     recorder_name: Optional[str] = None) -> tuple[str, InlineKeyboardMarkup]:
     topic = (goal.get("topic") or "").strip() or "— (نامشخص)"
     limit = goal.get("limit_amount")
     limit_str = f"{group_digits(limit)} تومان" if limit is not None else "— (تعیین‌نشده)"
@@ -19,6 +20,8 @@ def render_goal_card(goal: dict[str, Any], *, expanded: bool = False) -> tuple[s
     lines = ["🎯 هدف بودجه", f"📌 {topic}", f"💰 سقف {month}: {limit_str}"]
     if expanded and goal.get("note"):
         lines.append("🗒 " + goal["note"])
+    if recorder_name:
+        lines.append(f"👤 ثبت‌کننده: {recorder_name}")
     if not is_complete(goal):
         missing = "موضوع و سقف" if (not goal.get("topic") and goal.get("limit_amount") is None) \
             else ("موضوع" if not goal.get("topic") else "سقف")

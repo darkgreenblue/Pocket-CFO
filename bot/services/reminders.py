@@ -36,8 +36,16 @@ def _describe(txn: dict) -> str:
     return f"• #{txn['id']} — {title} | {amount}{tail}"
 
 
+def _known_users() -> list[int]:
+    """همه‌ی کاربرانِ شناخته‌شده (اعضای خانوارها) + آی‌دی‌های مجازِ تنظیمات."""
+    users = dict.fromkeys(repo.all_member_user_ids())
+    for uid in settings.allowed_user_ids or ():
+        users.setdefault(uid, None)
+    return list(users)
+
+
 async def nightly_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
-    for user_id in settings.allowed_user_ids or set():
+    for user_id in _known_users():
         pending = repo.pending_for_reminder(user_id)
         if not pending:
             continue

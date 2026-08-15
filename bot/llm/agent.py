@@ -15,11 +15,18 @@ from bot.config import settings
 from bot.llm.client import chat
 from bot.llm.prompts import EXTRACT_SYSTEM, PROFILE_BLOCK, QUERY_SYSTEM
 from bot.llm.tools import TOOLS_SPEC, dispatch
+from bot.services import debts as debts_service
 from bot.services import goals as goals_service
+from bot.services import household as household_service
 from bot.services import transactions as txn_service
 from bot.utils import jalali
 
 logger = logging.getLogger(__name__)
+
+NO_GOAL_PERMISSION = (
+    "🔒 هدف‌گذاری در این خانوار برای اکانتِ تو فعال نیست، برای همین هدف ثبت نشد. "
+    "اگر لازم است، از عضوی که خانوار را ساخته بخواه دسترسی‌ات را باز کند."
+)
 
 
 @dataclass
@@ -30,6 +37,9 @@ class AgentResult:
     updated: list[int] = field(default_factory=list)
     goals_created: list[int] = field(default_factory=list)
     goals_updated: list[int] = field(default_factory=list)
+    debts_created: list[int] = field(default_factory=list)
+    debts_updated: list[int] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
 
 async def transcribe(audio_ogg: bytes) -> str:
@@ -74,7 +84,8 @@ def _loads_lenient(raw: str) -> dict[str, Any]:
             except json.JSONDecodeError:
                 pass
     logger.error("نتوانستم خروجی استخراج را parse کنم: %s", (raw or "")[:300])
-    return {"reply": "", "transcript": "", "transactions": [], "updates": [], "needs_data": False}
+    return {"reply": "", "transcript": "", "transactions": [], "updates": [],
+            "debts": [], "debt_updates": [], "needs_data": False}
 
 
 async def _run_extraction(
@@ -117,18 +128,44 @@ async def _run_extraction(
             if res is not None:
                 updated.append(res)
 
+    debts_created: list[int] = []
+    debts_updated: list[int] = []
+    for d in data.get("debts") or []:
+        if not any((d.get("counterparty"), d.get("amount") is not None, d.get("title"))):
+            continue
+        try:
+            did, is_new = debts_service.create_or_update_from_item(user_id, d)
+        except Exception:  # noqa: BLE001
+            logger.exception("ثبت بدهی/طلب ناموفق بود")
+            continue
+        if did is None:
+            continue
+        (debts_created if is_new else debts_updated).append(did)
+
+    for du in data.get("debt_updates") or []:
+        did = du.get("debt_id")
+        if did:
+            res = debts_service.apply_update(user_id, int(did), du)
+            if res is not None and res not in debts_updated:
+                debts_updated.append(res)
+
+    notes: list[str] = []
+    goal_items = [g for g in (data.get("goals") or [])
+                  if (g.get("topic") or "").strip() or g.get("limit_amount") is not None]
+    goal_update_items = [gu for gu in (data.get("goal_updates") or []) if gu.get("goal_id")]
+    may_set_goals = household_service.can_set_goals(user_id)
+    if (goal_items or goal_update_items) and not may_set_goals:
+        notes.append(NO_GOAL_PERMISSION)
+
     goals_created: list[int] = []
-    for g in data.get("goals") or []:
-        if (g.get("topic") or "").strip() or g.get("limit_amount") is not None:
+    goals_updated: list[int] = []
+    if may_set_goals:
+        for g in goal_items:
             gid = goals_service.create_or_update_from_item(user_id, g)
             if gid is not None:
                 goals_created.append(gid)
-
-    goals_updated: list[int] = []
-    for gu in data.get("goal_updates") or []:
-        gid = gu.get("goal_id")
-        if gid:
-            res = goals_service.apply_update(user_id, int(gid), gu)
+        for gu in goal_update_items:
+            res = goals_service.apply_update(user_id, int(gu["goal_id"]), gu)
             if res is not None:
                 goals_updated.append(res)
 
@@ -143,7 +180,9 @@ async def _run_extraction(
 
     return AgentResult(reply=reply or "باشه 🙂", transcript=transcript,
                        created=created, updated=updated,
-                       goals_created=goals_created, goals_updated=goals_updated)
+                       goals_created=goals_created, goals_updated=goals_updated,
+                       debts_created=debts_created, debts_updated=debts_updated,
+                       notes=notes)
 
 
 async def converse(*, user_text: str, user_id: int, history=None, profile: str = "",

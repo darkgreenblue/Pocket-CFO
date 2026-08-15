@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from bot.db import repo
+from bot.services import debts as debts_service
+from bot.services import household as household_service
 from bot.services import tags as tags_service
 from bot.utils import jalali
 from bot.utils.money import currency_label
@@ -61,6 +63,24 @@ TOOLS_SPEC = [
     {
         "type": "function",
         "function": {
+            "name": "list_debts",
+            "description": ("فهرست بدهی‌ها و طلب‌های خانوار با مانده‌ی تسویه‌نشده‌ی هرکدام — "
+                            "برای «چقدر بدهکارم؟»، «کی بهم بدهکاره؟»، «بدهیم به رضا چقدر مونده؟»."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["debt", "credit", "all"],
+                             "description": ("debt = بدهی‌های خودمان، credit = طلب‌هایمان از "
+                                             "دیگران، all = هر دو (پیش‌فرض).")},
+                    "include_settled": {"type": "boolean",
+                                        "description": "تسویه‌شده‌ها هم بیایند؟ پیش‌فرض false."},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "compute_total_in_toman",
             "description": (
                 "جمع کلِ هزینه‌های یک بازه را به تومان حساب می‌کند. تبدیل ارز فقط با نرخی که "
@@ -94,8 +114,8 @@ def _start_iso(period: str) -> str | None:
     return None
 
 
-def _txn_brief(t: dict) -> dict:
-    return {
+def _txn_brief(t: dict, names: dict[int, str] | None = None) -> dict:
+    brief = {
         "id": t["id"],
         "title": t.get("title") or "(نامشخص)",
         "amount": t.get("amount"),
@@ -104,6 +124,34 @@ def _txn_brief(t: dict) -> dict:
         "tags": t.get("tags") or [],
         "date": (t.get("created_at") or "")[:10],
     }
+    # فقط در خانوارِ چندنفره معنا دارد؛ در حالت تک‌نفره نویزِ اضافه است.
+    if names:
+        brief["recorded_by"] = names.get(t.get("user_id"), household_service.DEFAULT_NAME)
+    return brief
+
+
+def _debt_brief(d: dict, names: dict[int, str] | None = None) -> dict:
+    brief = {
+        "id": d["id"],
+        "kind": d.get("kind"),
+        "kind_fa": debts_service.KIND_LABELS.get(d.get("kind"), "بدهی"),
+        "counterparty": d.get("counterparty") or "(نامشخص)",
+        "title": d.get("title") or "(نامشخص)",
+        "amount": d.get("amount"),
+        "settled_amount": d.get("settled_amount") or 0,
+        "remaining": debts_service.remaining(d),
+        "currency": d.get("currency_display"),
+        "status": d.get("status"),
+        "due": d.get("due_text"),
+        "date": (d.get("created_at") or "")[:10],
+    }
+    if names:
+        brief["recorded_by"] = names.get(d.get("user_id"), household_service.DEFAULT_NAME)
+    return brief
+
+
+def _member_names(user_id: int) -> dict[int, str] | None:
+    return household_service.name_map(user_id) if household_service.is_shared(user_id) else None
 
 
 def _by_currency(txns: list[dict]) -> dict[str, float]:
@@ -162,8 +210,9 @@ def dispatch(name: str, args: dict[str, Any], *, user_id: int) -> dict[str, Any]
             category = (args.get("category") or "").strip()
             if category:
                 txns = _filter_by_category(txns, category)
+            names = _member_names(user_id)
             out = {"period": label, "count": len(txns),
-                   "transactions": [_txn_brief(t) for t in txns]}
+                   "transactions": [_txn_brief(t, names) for t in txns]}
             if category:
                 out["category"] = category
                 out["totals_by_currency"] = {
@@ -184,6 +233,27 @@ def dispatch(name: str, args: dict[str, Any], *, user_id: int) -> dict[str, Any]
                 "totals_by_currency": {currency_label(c): v for c, v in by_cur.items()},
                 "toman_by_category": dict(sorted(cats.items(), key=lambda x: -x[1])),
                 "note": "ارزها جدا هستند و تبدیل خودکار انجام نشده.",
+            }
+
+        if name == "list_debts":
+            kind = (args.get("kind") or "all").strip().lower()
+            rows = repo.list_debts(
+                user_id,
+                kind=None if kind not in ("debt", "credit") else kind,
+                include_settled=bool(args.get("include_settled")),
+            )
+            names = _member_names(user_id)
+            open_totals = debts_service.totals(user_id)
+            return {
+                "count": len(rows),
+                "debts": [_debt_brief(d, names) for d in rows],
+                "open_totals": {
+                    "بدهی": {currency_label(c): v
+                             for c, v in (open_totals[debts_service.DEBT]).items()},
+                    "طلب": {currency_label(c): v
+                            for c, v in (open_totals[debts_service.CREDIT]).items()},
+                },
+                "note": "remaining یعنی مانده‌ی تسویه‌نشده. ارزها جدا هستند.",
             }
 
         if name == "compute_total_in_toman":

@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS tags (
 
 CREATE TABLE IF NOT EXISTS transactions (
     id                     INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id                INTEGER NOT NULL,
+    user_id                INTEGER NOT NULL,                 -- ثبت‌کننده (چه کسی وارد کرد)
+    household_id           INTEGER,                          -- دفترِ مشترکی که در آن ثبت شده
     status                 TEXT NOT NULL DEFAULT 'draft',   -- draft | confirmed
     title                  TEXT,
     amount                 INTEGER,                          -- عدد خام در واحد currency_display
@@ -55,7 +56,8 @@ CREATE TABLE IF NOT EXISTS messages (
 -- اهداف مالی (لیمیت ماهانه روی یک موضوع)
 CREATE TABLE IF NOT EXISTS goals (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id          INTEGER NOT NULL,
+    user_id          INTEGER NOT NULL,                -- ثبت‌کننده‌ی هدف
+    household_id     INTEGER,                         -- هدف متعلق به خانوار است، نه یک نفر
     status           TEXT NOT NULL DEFAULT 'draft',   -- draft | active
     topic            TEXT,
     tag_id           INTEGER REFERENCES tags(id),
@@ -85,6 +87,69 @@ CREATE TABLE IF NOT EXISTS pending_inputs (
     created_at TEXT NOT NULL
 );
 
+-- ─────────────────────────── خانوار (مالیِ مشترک) ───────────────────────────
+-- هر کاربر دقیقاً عضو یک خانوار است. کاربرِ تنها هم یک خانوارِ تک‌نفره دارد تا کل
+-- سیستم یک‌شکل بماند؛ با join شدنِ پارتنر، همان دفتر مشترک می‌شود.
+CREATE TABLE IF NOT EXISTS households (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL DEFAULT 'خانوار',
+    owner_id   INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS household_members (
+    household_id  INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    user_id       INTEGER NOT NULL,
+    role          TEXT NOT NULL DEFAULT 'member',   -- owner | member
+    relation      TEXT NOT NULL DEFAULT '',         -- پارتنر | همسر | فرزند | ...
+    display_name  TEXT NOT NULL DEFAULT '',
+    can_set_goals INTEGER NOT NULL DEFAULT 1,       -- اجازه‌ی هدف‌گذاری در خانوار
+    joined_at     TEXT NOT NULL,
+    PRIMARY KEY (household_id, user_id)
+);
+
+-- هر کاربر فقط در یک خانوار (فاز اول: بدون نیاز به اسکیل)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_member_user ON household_members(user_id);
+
+-- لینک دعوتِ یک‌بارمصرف؛ نسبت و سطح دسترسی از قبل روی خودِ لینک نشسته‌اند.
+CREATE TABLE IF NOT EXISTS household_invites (
+    token         TEXT PRIMARY KEY,
+    household_id  INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    created_by    INTEGER NOT NULL,
+    relation      TEXT NOT NULL DEFAULT '',
+    can_set_goals INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL,
+    used_at       TEXT,
+    used_by       INTEGER
+);
+
+-- ─────────────────────────── بدهی و طلب ───────────────────────────
+-- kind = debt  → من/خانوار به کسی بدهکاریم
+-- kind = credit→ کسی به من/خانوار بدهکار است (طلب)
+CREATE TABLE IF NOT EXISTS debts (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id          INTEGER NOT NULL,                 -- ثبت‌کننده
+    household_id     INTEGER,
+    kind             TEXT NOT NULL DEFAULT 'debt',     -- debt | credit
+    status           TEXT NOT NULL DEFAULT 'draft',    -- draft | open | settled
+    counterparty     TEXT,                             -- طرف حساب
+    title            TEXT,
+    amount           INTEGER,                          -- عدد خام در واحد currency_display
+    currency_display TEXT NOT NULL DEFAULT 'toman',
+    settled_amount   INTEGER NOT NULL DEFAULT 0,       -- چقدرش تسویه شده
+    due_text         TEXT,                             -- سررسید به بیانِ خودِ کاربر
+    note             TEXT NOT NULL DEFAULT '',
+    card_chat_id     INTEGER,
+    card_message_id  INTEGER,
+    jyear            INTEGER,
+    jmonth           INTEGER,
+    created_at       TEXT NOT NULL,
+    settled_at       TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_txn_user_status ON transactions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_txn_created ON transactions(created_at);
+CREATE INDEX IF NOT EXISTS idx_txn_household ON transactions(household_id, status);
 CREATE INDEX IF NOT EXISTS idx_msg_user ON messages(user_id, id);
+CREATE INDEX IF NOT EXISTS idx_goal_household ON goals(household_id, jyear, jmonth);
+CREATE INDEX IF NOT EXISTS idx_debt_household ON debts(household_id, status);
