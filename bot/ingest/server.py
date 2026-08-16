@@ -11,8 +11,12 @@ polling روی دیتابیس یا کامپوننتِ جداگانه نیست.
   POST /s/<token>      → مسیرِ ساده، همانی که میان‌برِ سه‌اکشنی می‌زند. بدنه **خامِ**
       متن است؛ برای ویس `?audio=m4a` و بدنه خودِ فایلِ صوتی. هیچ JSONای دستِ کاربر
       ساخته نمی‌شود — چون هر فیلدِ اضافه در فرمِ شرتکات یک قدمِ اضافه در راه‌اندازی است.
+      پاسخش هم عمداً **متنِ ساده** است، نه JSON: میان‌بر خروجی را مستقیم در
+      Show Notification می‌گذارد، و اگر JSON برگردانیم کاربر باید دو اکشنِ اضافه
+      (Get Dictionary + Get Value) می‌افزود تا فقط پیام را ببیند.
 
-  POST /ingest         → مسیرِ کامل با بدنه‌ی JSON (کنترلِ بیشتر، مثلاً request_id دستی):
+  POST /ingest         → مسیرِ کامل با بدنه‌ی JSON، برای فراخوانی‌ِ برنامه‌ای (کنترلِ
+      بیشتر، مثلاً request_id دستی). پاسخش JSON است چون کالرش کد است، نه چشمِ آدم:
       {"token": "...", "request_id": "...", "text": "..."}
       {"token": "...", "request_id": "...", "audio_b64": "...", "audio_format": "m4a"}
 """
@@ -41,14 +45,20 @@ class _BadRequest(Exception):
         self.message = message
 
 
-def _response(status: int, payload: dict) -> bytes:
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+def _response(status: int, payload: dict | str) -> bytes:
+    """`dict` → JSON، `str` → متنِ ساده (پاسخِ مسیرِ میان‌بر)."""
+    if isinstance(payload, str):
+        body = payload.encode("utf-8")
+        content_type = "text/plain; charset=utf-8"
+    else:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        content_type = "application/json; charset=utf-8"
     reason = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found",
               405: "Method Not Allowed", 413: "Payload Too Large",
               429: "Too Many Requests", 500: "Internal Server Error"}.get(status, "OK")
     head = (
         f"HTTP/1.1 {status} {reason}\r\n"
-        "Content-Type: application/json; charset=utf-8\r\n"
+        f"Content-Type: {content_type}\r\n"
         f"Content-Length: {len(body)}\r\n"
         "Connection: close\r\n"
         "\r\n"
@@ -113,8 +123,8 @@ def _authenticate(token: str) -> int:
 
 
 async def _handle_simple(bot, token: str, query: dict[str, list[str]],
-                         body: bytes) -> tuple[int, dict]:
-    """`POST /s/<token>` — بدنه خودِ متن یا خودِ فایلِ صوتی است.
+                         body: bytes) -> tuple[int, str]:
+    """`POST /s/<token>` — بدنه خودِ متن یا خودِ فایلِ صوتی است؛ پاسخ متنِ ساده.
 
     میان‌برِ سه‌اکشنی همین را می‌زند: نه هدری لازم است، نه JSONای، نه فیلدِ اضافه‌ای.
     """
@@ -141,8 +151,7 @@ async def _handle_simple(bot, token: str, query: dict[str, list[str]],
 
     result = await ingest.handle(bot, user_id=user_id, request_id=request_id,
                                  text=text, audio=audio)
-    return _status_for(result), {"ok": result.ok, "status": result.status,
-                                 "message": result.message}
+    return _status_for(result), result.message
 
 
 def _status_for(result) -> int:
@@ -170,6 +179,9 @@ async def _handle_ingest(bot, body: bytes) -> tuple[int, dict]:
 
 
 async def _client(bot, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    # مسیرِ میان‌بر متنِ ساده می‌گیرد — از جمله موقعِ خطا، چون همان متن مستقیم روی
+    # نوتیفیکیشنِ گوشی می‌نشیند. بقیه JSON.
+    plain = False
     try:
         try:
             method, target, body = await _read_request(reader)
@@ -179,6 +191,7 @@ async def _client(bot, reader: asyncio.StreamReader, writer: asyncio.StreamWrite
         raw_path, _, raw_query = target.partition("?")
         path = unquote(raw_path)
         query = parse_qs(raw_query)
+        plain = path.startswith("/s/")
 
         if path == "/health":
             status, payload = (200, {"ok": True}) if method == "GET" \
@@ -188,18 +201,20 @@ async def _client(bot, reader: asyncio.StreamReader, writer: asyncio.StreamWrite
                 status, payload = 405, {"ok": False, "message": "فقط POST"}
             else:
                 status, payload = await _handle_ingest(bot, body)
-        elif path.startswith("/s/"):
+        elif plain:
             if method != "POST":
-                status, payload = 405, {"ok": False, "message": "فقط POST"}
+                status, payload = 405, "فقط POST"
             else:
                 status, payload = await _handle_simple(bot, path[3:], query, body)
         else:
             status, payload = 404, {"ok": False, "message": "یافت نشد"}
     except _BadRequest as exc:
-        status, payload = exc.status, {"ok": False, "message": exc.message}
+        status = exc.status
+        payload = exc.message if plain else {"ok": False, "message": exc.message}
     except Exception:  # noqa: BLE001
         logger.exception("خطای غیرمنتظره در سرورِ ورودی")
-        status, payload = 500, {"ok": False, "message": "خطای داخلی"}
+        status = 500
+        payload = "خطای داخلی" if plain else {"ok": False, "message": "خطای داخلی"}
 
     try:
         writer.write(_response(status, payload))
