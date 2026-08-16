@@ -75,6 +75,9 @@ def build_application() -> Application:
 
 def main() -> None:
     app = build_application()
+    # وضعیتِ واقعیِ دسترسی را لاگ می‌کنیم: لیستِ .env روی سرور از بیرون دیده نمی‌شود و
+    # تنها راهِ فهمیدنِ اینکه ربات الان محدود است یا باز، همین خط در `docker logs` است.
+    logger.info("%s", settings.access_summary())
     logger.info("CFO جیبی راه افتاد. در انتظار پیام‌ها…")
     app.run_polling(allowed_updates=["message", "callback_query"])
 

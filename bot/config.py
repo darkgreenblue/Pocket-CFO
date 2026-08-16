@@ -36,6 +36,7 @@ class Settings:
     chunk_max_chars: int
     max_parts: int
     voice_oneshot_max_seconds: int
+    access_mode: str
     allowed_user_ids: frozenset[int]
     default_currency: str
     reminder_hour: int
@@ -50,8 +51,19 @@ class Settings:
     max_tool_rounds: int
 
     def is_authorized(self, user_id: int) -> bool:
-        # اگر لیست خالی باشد یعنی محدودیتی نگذاشته‌ایم (مناسب اولین راه‌اندازی).
+        if self.access_mode == ACCESS_OPEN:
+            return True
+        # لیستِ خالی هم یعنی محدودیتی در عمل وجود ندارد (مناسب اولین راه‌اندازی).
         return not self.allowed_user_ids or user_id in self.allowed_user_ids
+
+    def access_summary(self) -> str:
+        """یک خط برای لاگِ راه‌اندازی — تا وضعیتِ واقعیِ سرور از بیرون معلوم باشد."""
+        if self.access_mode == ACCESS_OPEN:
+            return "دسترسی: باز برای همه"
+        if not self.allowed_user_ids:
+            return "دسترسی: allowlist ولی لیست خالی است → عملاً باز برای همه"
+        ids = "، ".join(str(i) for i in sorted(self.allowed_user_ids))
+        return f"دسترسی: محدود به {len(self.allowed_user_ids)} آی‌دی ({ids}) + اعضای خانوارشان"
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -83,9 +95,20 @@ DAILY_LLM_LIMIT = 20               # سقف پیام‌های روزانه که 
 HISTORY_MAX_MESSAGES = 50          # سقف پیام‌های حافظه‌ی همان روز که به مدل داده می‌شود
 MAX_TOOL_ROUNDS = 12               # سقف دور‌های tool-calling در هر پیام (چند هزینه در یک پیام)
 
-# آی‌دی‌های عددیِ تلگرام که علاوه بر ALLOWED_USER_IDSِ .env مجازند. آی‌دی عددی محرمانه
-# نیست، پس مثل بقیه‌ی تنظیمات اینجا می‌ماند تا اضافه‌کردن یک نفر فقط یک push باشد و لازم
-# نشود روی سرور به .env دست بزنیم.
+# ─────────────────────────── دسترسی به ربات ───────────────────────────
+# محدودیتِ فعلی **موقت** است: تا وقتی ربات در مرحله‌ی شخصی/بتاست فقط آی‌دی‌های زیر
+# (به‌علاوه‌ی اعضای خانوارشان) اجازه‌ی استفاده دارند.
+#
+# 🔓 روزی که خواستی ربات را برای همه باز کنی: فقط همین یک خط را به
+#    ACCESS_MODE = ACCESS_OPEN تغییر بده و push کن. نه سرور، نه .env، نه لیست —
+#    از آن لحظه به هر کاربری جواب می‌دهد. برای برگرداندن، دوباره allowlist.
+ACCESS_OPEN = "open"
+ACCESS_ALLOWLIST = "allowlist"
+ACCESS_MODE = ACCESS_ALLOWLIST
+
+# آی‌دی‌های عددیِ تلگرامِ مجاز در حالت allowlist. آی‌دی عددی محرمانه نیست، پس مثل بقیه‌ی
+# تنظیمات اینجا می‌ماند تا اضافه‌کردنِ یک نفر فقط یک push باشد و لازم نشود روی سرور به
+# .env دست بزنیم. با ALLOWED_USER_IDSِ .env (اگر چیزی داشته باشد) جمع بسته می‌شود.
 # ⚠️ این‌ها فقط دسترسیِ استفاده از ربات را می‌دهند؛ عضویت در خانوارِ مشترک کارِ لینکِ دعوت
 # است (دکمه‌ی «افزودن عضو به خانوار»).
 EXTRA_ALLOWED_USER_IDS = (
@@ -121,6 +144,7 @@ def load_settings() -> Settings:
         chunk_max_chars=int(_get("CHUNK_MAX_CHARS", str(CHUNK_MAX_CHARS))),
         max_parts=int(_get("MAX_PARTS", str(MAX_PARTS))),
         voice_oneshot_max_seconds=int(_get("VOICE_ONESHOT_MAX_SECONDS", str(VOICE_ONESHOT_MAX_SECONDS))),
+        access_mode=_get("ACCESS_MODE", ACCESS_MODE),
         allowed_user_ids=allowed,
         default_currency=_get("DEFAULT_CURRENCY", DEFAULT_CURRENCY),
         reminder_hour=int(_get("REMINDER_HOUR", str(REMINDER_HOUR))),

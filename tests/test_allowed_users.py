@@ -13,18 +13,21 @@ EXTRA = 429557996
 OWNER = 111
 
 
-def _settings_with(env_value):
-    """config را با یک ALLOWED_USER_IDS مشخص دوباره بارگذاری می‌کند."""
+def _settings_with(env_value, access_mode=None):
+    """config را با ALLOWED_USER_IDS (و در صورت نیاز ACCESS_MODE) دوباره بارگذاری می‌کند."""
     from bot import config
-    old = os.environ.get("ALLOWED_USER_IDS")
+    saved = {k: os.environ.get(k) for k in ("ALLOWED_USER_IDS", "ACCESS_MODE")}
     os.environ["ALLOWED_USER_IDS"] = env_value
+    if access_mode is not None:
+        os.environ["ACCESS_MODE"] = access_mode
     try:
         return importlib.reload(config).load_settings()
     finally:
-        if old is None:
-            os.environ.pop("ALLOWED_USER_IDS", None)
-        else:
-            os.environ["ALLOWED_USER_IDS"] = old
+        for key, old in saved.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
         importlib.reload(config)
 
 
@@ -54,3 +57,29 @@ def test_empty_env_list_stays_open_to_everyone():
     assert settings.allowed_user_ids == frozenset()
     assert settings.is_authorized(EXTRA)
     assert settings.is_authorized(123456789)     # هر کسِ دیگر هم همچنان مجاز است
+
+
+def test_open_mode_lets_everyone_in_regardless_of_the_list():
+    """روزِ «باز برای همه»: فقط ACCESS_MODE عوض می‌شود و لیست دست‌نخورده می‌ماند."""
+    from bot.config import ACCESS_OPEN
+    settings = _settings_with(str(OWNER), access_mode=ACCESS_OPEN)
+    assert settings.is_authorized(999999)
+    assert settings.is_authorized(OWNER)
+    # لیست پاک نشده؛ برگرداندنِ محدودیت هم یک خط است.
+    assert OWNER in settings.allowed_user_ids
+
+
+def test_default_mode_is_still_restricted():
+    from bot.config import ACCESS_ALLOWLIST
+    settings = _settings_with(str(OWNER))
+    assert settings.access_mode == ACCESS_ALLOWLIST
+    assert not settings.is_authorized(999999)
+
+
+def test_access_summary_reports_the_effective_state():
+    """این خط در لاگِ راه‌اندازی می‌آید؛ باید حقیقت را بگوید، نه نیت را."""
+    from bot.config import ACCESS_OPEN
+    assert "باز برای همه" in _settings_with(str(OWNER), access_mode=ACCESS_OPEN).access_summary()
+    assert "عملاً باز" in _settings_with("").access_summary()
+    restricted = _settings_with(str(OWNER)).access_summary()
+    assert "محدود به" in restricted and str(EXTRA) in restricted
