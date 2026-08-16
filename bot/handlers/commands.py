@@ -131,6 +131,10 @@ Settings › Accessibility › Touch › Back Tap › Triple Tap → همین م
 
 **۳) تمام.** سه ضربه پشتِ گوشی → حرف بزن → کارتش همین‌جا برایت می‌آید.
 
+🔌 اگر کار نکرد، اول این را در Safari گوشی باز کن تا ببینی اصلاً به سرور می‌رسی یا نه:
+{health_url}
+باید `{{"ok": true}}` نشان بدهد. اگر نداد، مشکل از میان‌بر نیست — گوشی به سرور نمی‌رسد.
+
 🎙 اگر ویس می‌خواهی به‌جای دیکته: به‌جای `Dictate Text` از `Record Audio` استفاده کن و به آخرِ آدرس `?audio=m4a` اضافه کن.
 
 ⚠️ از این مسیر فقط **خرج** ثبت می‌شود. بدهی، هدف و گزارش را همین‌جا در تلگرام بگو.
@@ -155,5 +159,10 @@ async def cmd_shortcut(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     token = ingest_service.issue_token(user.id)
-    url = f"{settings.ingest_public_url}/s/{token}"
-    await update.message.reply_text(SHORTCUT_GUIDE.format(url=url), parse_mode="Markdown")
+    await update.message.reply_text(
+        SHORTCUT_GUIDE.format(
+            url=f"{settings.ingest_public_url}/s/{token}",
+            health_url=f"{settings.ingest_public_url}/health",
+        ),
+        parse_mode="Markdown",
+    )
