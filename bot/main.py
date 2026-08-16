@@ -21,7 +21,7 @@ from telegram.ext import (
 from bot.config import settings
 from bot.db import repo
 from bot.handlers.callbacks import on_callback
-from bot.handlers.commands import cmd_household, cmd_report, cmd_start
+from bot.handlers.commands import cmd_household, cmd_report, cmd_shortcut, cmd_start
 from bot.handlers.messages import handle_text, handle_unsupported, handle_voice
 from bot.ingest.server import IngestServer
 from bot.services.ingest import deliver_undelivered_cards, purge_old_requests
@@ -56,6 +56,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("report", cmd_report))
     app.add_handler(CommandHandler("household", cmd_household))
+    app.add_handler(CommandHandler("shortcut", cmd_shortcut))
     app.add_handler(CallbackQueryHandler(on_callback))
     # فقط ویس تلگرام پذیرفته می‌شود؛ فایل صوتی/تصویری رد می‌شود.
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))

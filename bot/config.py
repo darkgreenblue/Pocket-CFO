@@ -53,11 +53,16 @@ class Settings:
     ingest_tokens: dict[str, int]
     ingest_max_body_bytes: int
     ingest_audio_dir: str
+    ingest_public_url: str
 
     @property
     def ingest_enabled(self) -> bool:
-        """درِ دومِ ورودی فقط وقتی باز است که حداقل یک توکن تعریف شده باشد."""
-        return bool(self.ingest_tokens)
+        """درِ دوم وقتی باز است که یا آدرسِ عمومی ست شده باشد یا توکنِ ثابتی وجود داشته باشد.
+
+        `ingest_public_url` معیارِ اصلی است چون بدونِ آن `/shortcut` چیزی برای دادن به
+        کاربر ندارد؛ `ingest_tokens` مسیرِ قدیمی/bootstrap را زنده نگه می‌دارد.
+        """
+        return bool(self.ingest_public_url or self.ingest_tokens)
 
     def is_authorized(self, user_id: int) -> bool:
         # اگر لیست خالی باشد یعنی محدودیتی نگذاشته‌ایم (مناسب اولین راه‌اندازی).
@@ -101,6 +106,9 @@ INGEST_HOST = "0.0.0.0"            # noqa: S104 — داخل کانتینر؛ ا
 INGEST_PORT = 8081
 INGEST_MAX_BODY_MB = 12            # سقف حجمِ بدنه (ویسِ base64 حدود ۱.۳۳ برابر می‌شود)
 INGEST_AUDIO_DIR = "var/ingest_audio"   # ویسِ صف‌شده تا صبح اینجا می‌ماند
+# آدرسی که گوشیِ کاربر می‌بیند (مثل http://1.2.3.4:8081). تا وقتی ست نشود، دستورِ
+# /shortcut کار نمی‌کند — چون بدون آدرس، توکن به‌تنهایی به درد کاربر نمی‌خورد.
+INGEST_PUBLIC_URL = ""
 
 
 def _parse_ingest_tokens(raw: str) -> dict[str, int]:
@@ -166,6 +174,7 @@ def load_settings() -> Settings:
         ingest_tokens=_parse_ingest_tokens(_get("INGEST_TOKENS", "") or ""),
         ingest_max_body_bytes=int(_get("INGEST_MAX_BODY_MB", str(INGEST_MAX_BODY_MB))) * 1024 * 1024,
         ingest_audio_dir=_get("INGEST_AUDIO_DIR", INGEST_AUDIO_DIR),
+        ingest_public_url=(_get("INGEST_PUBLIC_URL", INGEST_PUBLIC_URL) or "").rstrip("/"),
     )
 
 

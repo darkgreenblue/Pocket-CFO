@@ -13,9 +13,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import hmac
 import logging
 import os
+import secrets
 import uuid
 from dataclasses import dataclass
 from typing import Optional
@@ -71,19 +73,57 @@ class IngestResult:
         return self.status not in ("error", "rate_limited")
 
 
+TOKEN_BYTES = 24  # ≈ ۳۲ کاراکترِ url-safe
+
+
+def issue_token(user_id: int) -> str:
+    """توکنِ تازه برای کاربر صادر و توکنِ قبلی‌اش را باطل می‌کند.
+
+    این چیزی است که راه‌اندازی را اسکیل‌پذیر می‌کند: کاربرِ تازه با `/shortcut` توکنش را
+    از خودِ ربات می‌گیرد — نه ویرایشِ `.env` لازم است نه ری‌استارتِ سرور.
+    """
+    token = secrets.token_urlsafe(TOKEN_BYTES)
+    repo.issue_ingest_token(user_id, token)
+    return token
+
+
 def resolve_user(token: str) -> int:
-    """توکن را به user_id تلگرام تبدیل می‌کند (یا خطا)."""
+    """توکن را به user_id تلگرام تبدیل می‌کند (یا خطا).
+
+    اول توکن‌های دیتابیس (که با /shortcut صادر می‌شوند)، بعد توکن‌های ثابتِ `.env`
+    (مسیرِ bootstrap برای وقتی هنوز هیچ توکنی صادر نشده).
+    """
     token = (token or "").strip()
-    # مقایسه‌ی constant-time روی همه‌ی توکن‌ها تا طولِ پاسخ چیزی لو ندهد.
+    known_tokens = dict(settings.ingest_tokens)
+    known_tokens.update(repo.all_ingest_tokens())
+
+    # روی کلِ مجموعه مقایسه می‌کنیم (بدون break) تا زمانِ پاسخ چیزی لو ندهد.
     match: Optional[int] = None
-    for known, user_id in settings.ingest_tokens.items():
+    for known, user_id in known_tokens.items():
         if hmac.compare_digest(known, token):
             match = user_id
     if match is None:
         raise IngestAuthError("توکن نامعتبر")
     if not household_service.authorized(match):
         raise IngestAuthError("کاربر مجاز نیست")
+    repo.touch_ingest_token(token)
     return match
+
+
+def fallback_request_id(user_id: int, text: str, audio: Optional[tuple[bytes, str]]) -> str:
+    """کلیدِ idempotency وقتی شرتکات خودش request_id نمی‌فرستد.
+
+    میان‌برِ ساده (سه اکشن) فیلدِ اضافه‌ای برای UUID ندارد، پس کلید را از خودِ محتوا و
+    دقیقه‌ی جاری می‌سازیم: دوباره‌فرستادنِ همان حرف بعد از قطعیِ شبکه تراکنشِ تکراری
+    نمی‌سازد، ولی خرجِ واقعاً تکراری در دقیقه‌ی بعد ثبت می‌شود.
+    """
+    digest = hashlib.sha256()
+    digest.update(str(user_id).encode())
+    digest.update(text.strip().encode("utf-8"))
+    if audio is not None:
+        digest.update(audio[0])
+    digest.update(dt.datetime.now().strftime("%Y%m%d%H%M").encode())
+    return f"auto-{digest.hexdigest()[:32]}"
 
 
 def normalize_audio_format(fmt: str, fallback: str = "m4a") -> str:

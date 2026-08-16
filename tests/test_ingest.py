@@ -64,10 +64,17 @@ def test_token_parsing_rejects_short_and_malformed():
     assert tokens == {"a" * 32: 1, "c" * 24: 3}
 
 
-def test_empty_token_config_disables_the_door():
-    from bot.config import Settings
+def test_door_stays_shut_without_url_or_static_token(set_setting):
+    from bot.config import settings
     assert _parse_ingest_tokens("") == {}
-    assert Settings.ingest_enabled.fget(type("S", (), {"ingest_tokens": {}})()) is False
+
+    set_setting("ingest_tokens", {})
+    set_setting("ingest_public_url", "")
+    assert settings.ingest_enabled is False
+
+    # آدرسِ عمومی به‌تنهایی کافی است — توکن‌ها از /shortcut می‌آیند.
+    set_setting("ingest_public_url", "http://example.com:8081")
+    assert settings.ingest_enabled is True
 
 
 def test_resolve_user_rejects_bad_token(ingest_env):
@@ -252,3 +259,53 @@ def test_card_survives_telegram_being_down(ingest_env, db, monkeypatch):
     _run(ingest_env.deliver_undelivered_cards(type("Ctx", (), {"bot": bot})()))
     assert bot.sent
     assert db.undelivered_cards("shortcut", "2000-01-01T00:00:00") == []
+
+
+# ---------- توکنِ دیتابیسی (مسیرِ اسکیل‌پذیر) ----------
+
+def test_issued_token_resolves_without_touching_env(ingest_env, db, set_setting):
+    """کاربرِ تازه با /shortcut توکن می‌گیرد — بدونِ ویرایشِ .env و بدونِ ری‌استارت."""
+    set_setting("ingest_tokens", {})           # هیچ توکنِ ثابتی در .env نیست
+    set_setting("allowed_user_ids", frozenset({USER}))
+
+    token = ingest_env.issue_token(USER)
+    assert len(token) >= 24
+    assert ingest_env.resolve_user(token) == USER
+
+
+def test_issuing_again_revokes_the_previous_token(ingest_env, db, set_setting):
+    set_setting("ingest_tokens", {})
+    old = ingest_env.issue_token(USER)
+    new = ingest_env.issue_token(USER)
+
+    assert old != new
+    assert ingest_env.resolve_user(new) == USER
+    with pytest.raises(ingest_env.IngestAuthError):
+        ingest_env.resolve_user(old)
+
+
+def test_issued_token_stops_working_when_access_is_revoked(ingest_env, db, set_setting):
+    set_setting("ingest_tokens", {})
+    token = ingest_env.issue_token(USER)
+    set_setting("allowed_user_ids", frozenset({999}))
+    with pytest.raises(ingest_env.IngestAuthError):
+        ingest_env.resolve_user(token)
+
+
+# ---------- کلیدِ خودکارِ تکراری‌نشدن ----------
+
+def test_fallback_request_id_is_stable_for_identical_input(ingest_env):
+    a = ingest_env.fallback_request_id(USER, "قهوه ۹۰ تومن", None)
+    b = ingest_env.fallback_request_id(USER, "قهوه ۹۰ تومن", None)
+    c = ingest_env.fallback_request_id(USER, "چای ۹۰ تومن", None)
+    d = ingest_env.fallback_request_id(999, "قهوه ۹۰ تومن", None)
+
+    assert a == b          # همان حرف، دوباره فرستاده شد → تراکنشِ تکراری نمی‌سازد
+    assert a != c          # حرفِ دیگر → ثبتِ جدا
+    assert a != d          # کاربرِ دیگر → ثبتِ جدا
+
+
+def test_fallback_request_id_separates_audio_from_text(ingest_env):
+    text_key = ingest_env.fallback_request_id(USER, "", None)
+    audio_key = ingest_env.fallback_request_id(USER, "", (b"blob", "m4a"))
+    assert text_key != audio_key

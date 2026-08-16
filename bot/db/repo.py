@@ -481,6 +481,44 @@ def users_with_pending() -> list[int]:
 
 # ---------- درِ دومِ ورودی (شرتکات) ----------
 
+def issue_ingest_token(user_id: int, token: str) -> None:
+    """توکنِ تازه برای کاربر صادر می‌کند و توکنِ قبلی‌اش را باطل می‌کند (rotate)."""
+    with _conn() as conn:
+        conn.execute("DELETE FROM ingest_tokens WHERE user_id = ?", (user_id,))
+        conn.execute(
+            "INSERT INTO ingest_tokens(token, user_id, created_at) VALUES (?, ?, ?)",
+            (token, user_id, datetime.now().isoformat()),
+        )
+
+
+def ingest_token_owner(token: str) -> Optional[int]:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM ingest_tokens WHERE token = ?", (token,)
+        ).fetchone()
+    return row["user_id"] if row else None
+
+
+def all_ingest_tokens() -> dict[str, int]:
+    """همه‌ی توکن‌ها — برای مقایسه‌ی constant-time روی کلِ مجموعه."""
+    with _conn() as conn:
+        rows = conn.execute("SELECT token, user_id FROM ingest_tokens").fetchall()
+    return {r["token"]: r["user_id"] for r in rows}
+
+
+def touch_ingest_token(token: str) -> None:
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE ingest_tokens SET last_used_at = ? WHERE token = ?",
+            (datetime.now().isoformat(), token),
+        )
+
+
+def revoke_ingest_tokens(user_id: int) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM ingest_tokens WHERE user_id = ?", (user_id,))
+
+
 def find_ingest_request(request_id: str) -> Optional[dict[str, Any]]:
     with _conn() as conn:
         row = conn.execute(

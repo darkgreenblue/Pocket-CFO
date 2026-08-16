@@ -89,6 +89,15 @@ CREATE TABLE IF NOT EXISTS pending_inputs (
 
 -- درخواست‌های درِ دوم (شرتکاتِ iOS). کلید همان request_id ای است که خودِ شرتکات
 -- می‌سازد؛ اگر شبکه قطع شد و کاربر دوباره فرستاد، تراکنشِ تکراری ساخته نمی‌شود.
+-- توکنِ میان‌برِ هر کاربر. کاربر با /shortcut خودش توکنش را می‌گیرد، پس افزودنِ کاربرِ
+-- تازه نه ویرایشِ .env می‌خواهد نه ری‌استارتِ سرور.
+CREATE TABLE IF NOT EXISTS ingest_tokens (
+    token        TEXT PRIMARY KEY,
+    user_id      INTEGER NOT NULL,
+    created_at   TEXT NOT NULL,
+    last_used_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS ingest_requests (
     request_id TEXT PRIMARY KEY,
     user_id    INTEGER NOT NULL,
