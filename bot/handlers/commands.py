@@ -1,4 +1,4 @@
-"""دستورهای ربات: /start (آنبوردینگ + پذیرشِ لینکِ دعوت)، /report و /household."""
+"""دستورهای ربات: /start (آنبوردینگ + پذیرشِ لینکِ دعوت)، /report، /household و /shortcut."""
 from __future__ import annotations
 
 import logging
@@ -6,8 +6,10 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from bot.config import settings
 from bot.handlers.keyboards import BTN_HOUSEHOLD, main_menu, report_period_keyboard
 from bot.services import household as household_service
+from bot.services import ingest as ingest_service
 
 logger = logging.getLogger(__name__)
 
@@ -105,3 +107,62 @@ async def cmd_household(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         lines.append("")
         lines.append(f"فعلاً تنهایی. با دکمه‌ی «{BTN_HOUSEHOLD}» می‌تونی پارتنرت رو دعوت کنی.")
     await update.message.reply_text("\n".join(lines))
+
+
+SHORTCUT_DISABLED = (
+    "میان‌برِ گوشی روی این سرور فعال نیست. (ادمین باید `INGEST_PUBLIC_URL` را در "
+    "`.env` بگذارد.)"
+)
+
+SHORTCUT_GUIDE = """📱 ثبتِ خرج با سه ضربه پشتِ گوشی
+
+این آدرسِ شخصیِ توست. **مثل رمز باهاش رفتار کن** — هرکس داشته باشد می‌تواند روی دفترِ مالیِ تو خرج ثبت کند:
+
+`{url}`
+
+**۱) میان‌بر را بساز** — در اپ Shortcuts یک میان‌برِ تازه با همین سه اکشن:
+
+• `Dictate Text` — زبان: Persian
+• `Get Contents of URL` — آدرسِ بالا، Method روی `POST`، و در Request Body گزینه‌ی `File` را بزن و متغیرِ `Dictated Text` را بگذار
+• `Show Notification` — متنِ پاسخ
+
+**۲) وصلش کن به پشتِ گوشی**
+Settings › Accessibility › Touch › Back Tap › Triple Tap → همین میان‌بر
+
+**۳) تمام.** سه ضربه پشتِ گوشی → حرف بزن → کارتش همین‌جا برایت می‌آید.
+
+🔌 اگر کار نکرد، اول این را در Safari گوشی باز کن تا ببینی اصلاً به سرور می‌رسی یا نه:
+{health_url}
+باید `{{"ok": true}}` نشان بدهد. اگر نداد، مشکل از میان‌بر نیست — گوشی به سرور نمی‌رسد.
+
+🎙 اگر ویس می‌خواهی به‌جای دیکته: به‌جای `Dictate Text` از `Record Audio` استفاده کن و به آخرِ آدرس `?audio=m4a` اضافه کن.
+
+⚠️ از این مسیر فقط **خرج** ثبت می‌شود. بدهی، هدف و گزارش را همین‌جا در تلگرام بگو.
+
+اگر آدرس لو رفت، دوباره /shortcut بزن — آدرسِ قبلی همان لحظه باطل می‌شود."""
+
+
+async def cmd_shortcut(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """توکنِ شخصیِ کاربر را صادر می‌کند و راهنمای میان‌بر را می‌دهد.
+
+    نقطه‌ی اسکیل‌پذیریِ راه‌اندازی: هر کاربرِ تازه خودش توکنش را از اینجا می‌گیرد،
+    بدونِ اینکه کسی `.env` را ویرایش یا سرور را ری‌استارت کند.
+    """
+    user = update.effective_user
+    if user and not household_service.authorized(user.id):
+        await update.message.reply_text(NOT_ALLOWED)
+        return
+    household_service.touch(user.id, _full_name(user))
+
+    if not settings.ingest_public_url:
+        await update.message.reply_text(SHORTCUT_DISABLED, parse_mode="Markdown")
+        return
+
+    token = ingest_service.issue_token(user.id)
+    await update.message.reply_text(
+        SHORTCUT_GUIDE.format(
+            url=f"{settings.ingest_public_url}/s/{token}",
+            health_url=f"{settings.ingest_public_url}/health",
+        ),
+        parse_mode="Markdown",
+    )

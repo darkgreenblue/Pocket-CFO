@@ -21,8 +21,10 @@ from telegram.ext import (
 from bot.config import settings
 from bot.db import repo
 from bot.handlers.callbacks import on_callback
-from bot.handlers.commands import cmd_household, cmd_report, cmd_start
+from bot.handlers.commands import cmd_household, cmd_report, cmd_shortcut, cmd_start
 from bot.handlers.messages import handle_text, handle_unsupported, handle_voice
+from bot.ingest.server import IngestServer
+from bot.services.ingest import deliver_undelivered_cards, purge_old_requests
 from bot.services.pending import morning_job
 from bot.services.reminders import nightly_profile_update, nightly_reminder
 
@@ -35,11 +37,26 @@ logger = logging.getLogger(__name__)
 
 def build_application() -> Application:
     repo.init_db()
-    app = Application.builder().token(settings.telegram_bot_token).build()
+    ingest_server = IngestServer()
+
+    async def _open_ingest(app: Application) -> None:
+        await ingest_server.start(app.bot)
+
+    async def _close_ingest(_app: Application) -> None:
+        await ingest_server.stop()
+
+    app = (
+        Application.builder()
+        .token(settings.telegram_bot_token)
+        .post_init(_open_ingest)
+        .post_shutdown(_close_ingest)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("report", cmd_report))
     app.add_handler(CommandHandler("household", cmd_household))
+    app.add_handler(CommandHandler("shortcut", cmd_shortcut))
     app.add_handler(CallbackQueryHandler(on_callback))
     # فقط ویس تلگرام پذیرفته می‌شود؛ فایل صوتی/تصویری رد می‌شود.
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
@@ -70,6 +87,17 @@ def build_application() -> Application:
             time=dt.time(hour=settings.morning_hour, minute=0, tzinfo=_TEHRAN),
             name="morning_flush",
         )
+        if settings.ingest_enabled:
+            # کارتِ تراکنشی که از میان‌بر ثبت شد ولی لحظه‌ی ثبت به تلگرام نرسید.
+            app.job_queue.run_repeating(
+                deliver_undelivered_cards, interval=300, first=60,
+                name="ingest_card_retry",
+            )
+            app.job_queue.run_daily(
+                purge_old_requests,
+                time=dt.time(hour=4, minute=0, tzinfo=_TEHRAN),
+                name="ingest_purge",
+            )
     return app
 
 

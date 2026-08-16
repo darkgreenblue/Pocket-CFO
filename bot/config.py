@@ -49,6 +49,21 @@ class Settings:
     daily_llm_limit: int
     history_max_messages: int
     max_tool_rounds: int
+    ingest_host: str
+    ingest_port: int
+    ingest_tokens: dict[str, int]
+    ingest_max_body_bytes: int
+    ingest_audio_dir: str
+    ingest_public_url: str
+
+    @property
+    def ingest_enabled(self) -> bool:
+        """درِ دوم وقتی باز است که یا آدرسِ عمومی ست شده باشد یا توکنِ ثابتی وجود داشته باشد.
+
+        `ingest_public_url` معیارِ اصلی است چون بدونِ آن `/shortcut` چیزی برای دادن به
+        کاربر ندارد؛ `ingest_tokens` مسیرِ قدیمی/bootstrap را زنده نگه می‌دارد.
+        """
+        return bool(self.ingest_public_url or self.ingest_tokens)
 
     def is_authorized(self, user_id: int) -> bool:
         if self.access_mode == ACCESS_OPEN:
@@ -94,6 +109,42 @@ RATE_LIMIT_WINDOW = 30             # طول پنجره به ثانیه
 DAILY_LLM_LIMIT = 20               # سقف پیام‌های روزانه که به LLM می‌روند (مدیریت هزینه)
 HISTORY_MAX_MESSAGES = 50          # سقف پیام‌های حافظه‌ی همان روز که به مدل داده می‌شود
 MAX_TOOL_ROUNDS = 12               # سقف دور‌های tool-calling در هر پیام (چند هزینه در یک پیام)
+
+# ─── درِ دومِ ورودی (شرتکاتِ iOS) ───
+# ربات علاوه بر تلگرام، یک endpoint کوچکِ HTTP هم دارد تا وقتی گوشیِ کاربر به تلگرام
+# دسترسی ندارد (ولی به سرورِ ما دارد) بتواند خرجش را ثبت کند. کارتِ تأیید را سرور
+# — که خودش به تلگرام دسترسی دارد — می‌فرستد و کاربر بعداً در تلگرام تأییدش می‌کند.
+INGEST_HOST = "0.0.0.0"            # noqa: S104 — داخل کانتینر؛ انتشار با ports در compose
+INGEST_PORT = 8081
+INGEST_MAX_BODY_MB = 12            # سقف حجمِ بدنه (ویسِ base64 حدود ۱.۳۳ برابر می‌شود)
+INGEST_AUDIO_DIR = "var/ingest_audio"   # ویسِ صف‌شده تا صبح اینجا می‌ماند
+# آدرسی که گوشیِ کاربر می‌بیند (مثل http://1.2.3.4:8081). تا وقتی ست نشود، دستورِ
+# /shortcut کار نمی‌کند — چون بدون آدرس، توکن به‌تنهایی به درد کاربر نمی‌خورد.
+INGEST_PUBLIC_URL = ""
+
+
+def _parse_ingest_tokens(raw: str) -> dict[str, int]:
+    """`INGEST_TOKENS` را به نگاشتِ token → user_id تبدیل می‌کند.
+
+    قالب: `<user_id>:<token>` جداشده با کاما. توکن کلیدِ نگاشت است تا جست‌وجو با
+    خودِ توکنِ ورودی انجام شود و user_id هیچ‌وقت از سمتِ کلاینت نیاید.
+    """
+    tokens: dict[str, int] = {}
+    for chunk in (raw or "").split(","):
+        chunk = chunk.strip()
+        if not chunk or ":" not in chunk:
+            continue
+        raw_id, _, token = chunk.partition(":")
+        token = token.strip()
+        try:
+            user_id = int(raw_id.strip())
+        except ValueError:
+            continue
+        # توکنِ کوتاه عملاً یعنی بی‌حفاظ؛ چون این کلیدِ نوشتن روی دفترِ مالی است.
+        if len(token) >= 24:
+            tokens[token] = user_id
+    return tokens
+
 
 # ─────────────────────────── دسترسی به ربات ───────────────────────────
 # محدودیتِ فعلی **موقت** است: تا وقتی ربات در مرحله‌ی شخصی/بتاست فقط آی‌دی‌های زیر
@@ -157,6 +208,12 @@ def load_settings() -> Settings:
         daily_llm_limit=int(_get("DAILY_LLM_LIMIT", str(DAILY_LLM_LIMIT))),
         history_max_messages=int(_get("HISTORY_MAX_MESSAGES", str(HISTORY_MAX_MESSAGES))),
         max_tool_rounds=int(_get("MAX_TOOL_ROUNDS", str(MAX_TOOL_ROUNDS))),
+        ingest_host=_get("INGEST_HOST", INGEST_HOST),
+        ingest_port=int(_get("INGEST_PORT", str(INGEST_PORT))),
+        ingest_tokens=_parse_ingest_tokens(_get("INGEST_TOKENS", "") or ""),
+        ingest_max_body_bytes=int(_get("INGEST_MAX_BODY_MB", str(INGEST_MAX_BODY_MB))) * 1024 * 1024,
+        ingest_audio_dir=_get("INGEST_AUDIO_DIR", INGEST_AUDIO_DIR),
+        ingest_public_url=(_get("INGEST_PUBLIC_URL", INGEST_PUBLIC_URL) or "").rstrip("/"),
     )
 
 

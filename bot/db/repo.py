@@ -479,6 +479,99 @@ def users_with_pending() -> list[int]:
     return [r["user_id"] for r in rows]
 
 
+# ---------- درِ دومِ ورودی (شرتکات) ----------
+
+def issue_ingest_token(user_id: int, token: str) -> None:
+    """توکنِ تازه برای کاربر صادر می‌کند و توکنِ قبلی‌اش را باطل می‌کند (rotate)."""
+    with _conn() as conn:
+        conn.execute("DELETE FROM ingest_tokens WHERE user_id = ?", (user_id,))
+        conn.execute(
+            "INSERT INTO ingest_tokens(token, user_id, created_at) VALUES (?, ?, ?)",
+            (token, user_id, datetime.now().isoformat()),
+        )
+
+
+def ingest_token_owner(token: str) -> Optional[int]:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM ingest_tokens WHERE token = ?", (token,)
+        ).fetchone()
+    return row["user_id"] if row else None
+
+
+def all_ingest_tokens() -> dict[str, int]:
+    """همه‌ی توکن‌ها — برای مقایسه‌ی constant-time روی کلِ مجموعه."""
+    with _conn() as conn:
+        rows = conn.execute("SELECT token, user_id FROM ingest_tokens").fetchall()
+    return {r["token"]: r["user_id"] for r in rows}
+
+
+def touch_ingest_token(token: str) -> None:
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE ingest_tokens SET last_used_at = ? WHERE token = ?",
+            (datetime.now().isoformat(), token),
+        )
+
+
+def revoke_ingest_tokens(user_id: int) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM ingest_tokens WHERE user_id = ?", (user_id,))
+
+
+def find_ingest_request(request_id: str) -> Optional[dict[str, Any]]:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT request_id, user_id, status, message FROM ingest_requests WHERE request_id = ?",
+            (request_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def claim_ingest_request(request_id: str, user_id: int) -> bool:
+    """جای این درخواست را رزرو می‌کند. False یعنی قبلاً دیده‌ایمش (تکراری).
+
+    رزروِ اتمیک است تا دو POSTِ هم‌زمانِ یک درخواست دو تراکنش نسازند.
+    """
+    with _conn() as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO ingest_requests(request_id, user_id, status, message, created_at) "
+            "VALUES (?, ?, 'processing', '', ?)",
+            (request_id, user_id, datetime.now().isoformat()),
+        )
+        return cur.rowcount > 0
+
+
+def finish_ingest_request(request_id: str, status: str, message: str) -> None:
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE ingest_requests SET status = ?, message = ? WHERE request_id = ?",
+            (status, message, request_id),
+        )
+
+
+def release_ingest_request(request_id: str) -> None:
+    """رزرو را پس می‌گیرد تا کاربر بتواند همان درخواست را دوباره بفرستد."""
+    with _conn() as conn:
+        conn.execute("DELETE FROM ingest_requests WHERE request_id = ?", (request_id,))
+
+
+def purge_ingest_requests(before_iso: str) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM ingest_requests WHERE created_at < ?", (before_iso,))
+
+
+def undelivered_cards(source: str, since_iso: str) -> list[dict[str, Any]]:
+    """تراکنش‌هایی که ساخته شدند ولی کارتشان به تلگرام نرسید (برای تلاشِ دوباره)."""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT id, user_id FROM transactions "
+            "WHERE source = ? AND card_message_id IS NULL AND created_at >= ? ORDER BY id",
+            (source, since_iso),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def sync_status(txn_id: int) -> str:
     """اگر تراکنش مبلغ و عنوان داشت → confirmed، وگرنه draft. وضعیت نهایی را برمی‌گرداند."""
     with _conn() as conn:

@@ -50,11 +50,29 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
+          # آدرسی که گوشیِ کاربر برای میان‌برِ iOS صدا می‌زند. پیش‌فرض از همان هاستِ
+          # دیپلوی ساخته می‌شود تا کسی لازم نباشد دستی چیزی به .env سرور اضافه کند.
+          # اگر روزی Cloudflare/دامنه جلویش آمد، یک Variable به همین نام در گیت‌هاب
+          # بساز (Settings → Secrets and variables → Actions → Variables) و همان برنده است.
+          INGEST_PUBLIC_URL: ${{ vars.INGEST_PUBLIC_URL || format('http://{0}:8081', secrets.SSH_HOST) }}
         run: |
+          # تنظیماتِ تولیدشده‌ی دیپلوی، جدا از .envِ دست‌سازِ سرور تا با هم قاطی نشوند.
+          # (اینجا داخل کوتیشنِ دوتایی است تا مقدار سمتِ لوکال جایگزین شود.)
+          ssh -p "${SSH_PORT:-22}" -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" \
+            "mkdir -p ~/pocket-cfo && printf 'INGEST_PUBLIC_URL=%s\n' '$INGEST_PUBLIC_URL' > ~/pocket-cfo/.deploy.env"
+
           ssh -p "${SSH_PORT:-22}" -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" '
             set -e
             cd ~/pocket-cfo
             docker load -i image.tar.gz
+            set -a; . ./.deploy.env; set +a
+
+            # پورتِ درِ دومِ ورودی. فقط اگر ufw فعال باشد؛ فایروالِ ابریِ ارائه‌دهنده
+            # (اگر داشته باشد) از اینجا قابلِ تنظیم نیست.
+            if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+              ufw allow 8081/tcp >/dev/null 2>&1 || true
+            fi
+
             docker compose up -d
             rm -f image.tar.gz
             docker image prune -f
