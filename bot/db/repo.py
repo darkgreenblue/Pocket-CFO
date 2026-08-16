@@ -479,6 +479,61 @@ def users_with_pending() -> list[int]:
     return [r["user_id"] for r in rows]
 
 
+# ---------- درِ دومِ ورودی (شرتکات) ----------
+
+def find_ingest_request(request_id: str) -> Optional[dict[str, Any]]:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT request_id, user_id, status, message FROM ingest_requests WHERE request_id = ?",
+            (request_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def claim_ingest_request(request_id: str, user_id: int) -> bool:
+    """جای این درخواست را رزرو می‌کند. False یعنی قبلاً دیده‌ایمش (تکراری).
+
+    رزروِ اتمیک است تا دو POSTِ هم‌زمانِ یک درخواست دو تراکنش نسازند.
+    """
+    with _conn() as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO ingest_requests(request_id, user_id, status, message, created_at) "
+            "VALUES (?, ?, 'processing', '', ?)",
+            (request_id, user_id, datetime.now().isoformat()),
+        )
+        return cur.rowcount > 0
+
+
+def finish_ingest_request(request_id: str, status: str, message: str) -> None:
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE ingest_requests SET status = ?, message = ? WHERE request_id = ?",
+            (status, message, request_id),
+        )
+
+
+def release_ingest_request(request_id: str) -> None:
+    """رزرو را پس می‌گیرد تا کاربر بتواند همان درخواست را دوباره بفرستد."""
+    with _conn() as conn:
+        conn.execute("DELETE FROM ingest_requests WHERE request_id = ?", (request_id,))
+
+
+def purge_ingest_requests(before_iso: str) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM ingest_requests WHERE created_at < ?", (before_iso,))
+
+
+def undelivered_cards(source: str, since_iso: str) -> list[dict[str, Any]]:
+    """تراکنش‌هایی که ساخته شدند ولی کارتشان به تلگرام نرسید (برای تلاشِ دوباره)."""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT id, user_id FROM transactions "
+            "WHERE source = ? AND card_message_id IS NULL AND created_at >= ? ORDER BY id",
+            (source, since_iso),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def sync_status(txn_id: int) -> str:
     """اگر تراکنش مبلغ و عنوان داشت → confirmed، وگرنه draft. وضعیت نهایی را برمی‌گرداند."""
     with _conn() as conn:

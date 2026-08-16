@@ -8,6 +8,11 @@ services:
     environment:
       # دیتابیس روی volume پایدار؛ جدا از مسیر data/ که seed تگ‌ها داخل آن baked شده.
       - DB_PATH=/app/var/pocket_cfo.db
+      # ویسِ صف‌شده‌ی میان‌بر هم روی همان volume می‌ماند تا با ری‌استارت گم نشود.
+      - INGEST_AUDIO_DIR=/app/var/ingest_audio
+    ports:
+      # درِ دومِ ورودی (میان‌برِ iOS). اگر INGEST_TOKENS خالی باشد سرور اصلاً بالا نمی‌آید.
+      - "8081:8081"
     volumes:
       - pocketcfo-data:/app/var
 

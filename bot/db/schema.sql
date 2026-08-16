@@ -82,8 +82,18 @@ CREATE TABLE IF NOT EXISTS user_profile (
 CREATE TABLE IF NOT EXISTS pending_inputs (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL,
-    kind       TEXT NOT NULL DEFAULT 'text',   -- text | voice
-    content    TEXT NOT NULL,                  -- متن، یا file_id ویس
+    kind       TEXT NOT NULL DEFAULT 'text',   -- text | voice | voice_file
+    content    TEXT NOT NULL,                  -- متن، یا file_id ویس، یا مسیرِ فایلِ ویس
+    created_at TEXT NOT NULL
+);
+
+-- درخواست‌های درِ دوم (شرتکاتِ iOS). کلید همان request_id ای است که خودِ شرتکات
+-- می‌سازد؛ اگر شبکه قطع شد و کاربر دوباره فرستاد، تراکنشِ تکراری ساخته نمی‌شود.
+CREATE TABLE IF NOT EXISTS ingest_requests (
+    request_id TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL,
+    status     TEXT NOT NULL,                  -- recorded | queued | nothing | error
+    message    TEXT NOT NULL DEFAULT '',       -- همان چیزی که به شرتکات پس داده شد
     created_at TEXT NOT NULL
 );
 

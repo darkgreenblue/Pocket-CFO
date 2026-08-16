@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from bot.db import repo
 from bot.handlers.cards import send_card, send_debt_card, send_goal_card
@@ -19,6 +20,12 @@ logger = logging.getLogger(__name__)
 WAIT_MSG = "📝 دارم تراکنش‌های باقی‌مانده‌ی قبلی‌ات رو یکجا ثبت می‌کنم…"
 
 
+def _format_of(path: str) -> str:
+    """فرمتِ صوت را از پسوندِ فایلِ ذخیره‌شده درمی‌آورد."""
+    ext = os.path.splitext(path)[1].lstrip(".").lower()
+    return ext or "ogg"
+
+
 async def flush_pending(bot, user_id: int) -> bool:
     """صفِ کاربر را در یک درخواست ثبت می‌کند. True اگر چیزی پردازش شد."""
     items = repo.get_pending(user_id)
@@ -27,20 +34,28 @@ async def flush_pending(bot, user_id: int) -> bool:
 
     text_parts = [i["content"] for i in items if i["kind"] == "text"]
     voice_ids = [i["content"] for i in items if i["kind"] == "voice"]
+    # ویسِ شرتکات file_id تلگرامی ندارد؛ روی دیسکِ خودمان ذخیره شده است.
+    voice_paths = [i["content"] for i in items if i["kind"] == "voice_file"]
 
     wait = await bot.send_message(chat_id=user_id, text=WAIT_MSG)
 
-    audio_blobs: list[bytes] = []
+    audio_items: list[tuple[bytes, str]] = []
     for fid in voice_ids:
         try:
             f = await bot.get_file(fid)
-            audio_blobs.append(bytes(await f.download_as_bytearray()))
+            audio_items.append((bytes(await f.download_as_bytearray()), "ogg"))
         except Exception:  # noqa: BLE001
             logger.warning("دانلود ویسِ صف (%s) ناموفق بود", fid)
+    for path in voice_paths:
+        try:
+            with open(path, "rb") as fh:
+                audio_items.append((fh.read(), _format_of(path)))
+        except OSError:
+            logger.warning("خواندن ویسِ صف‌شده (%s) ناموفق بود", path)
 
     try:
         result = await agent.converse_batch(
-            text_parts=text_parts, audio_blobs=audio_blobs, user_id=user_id,
+            text_parts=text_parts, audio_items=audio_items, user_id=user_id,
             history=memory.history(user_id), profile=memory.profile(user_id),
             allowed_tags=tags_service.allowed_tag_names(repo.get_tags()),
         )
@@ -53,6 +68,11 @@ async def flush_pending(bot, user_id: int) -> bool:
         return False
 
     repo.clear_pending(user_id)
+    for path in voice_paths:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
     memory.remember(user_id, "user", f"[صفِ بعد از ساعت کاری: {len(items)} پیام]")  # یک کوپن
     memory.remember(user_id, "assistant", result.reply or "ثبت شد.")
     try:

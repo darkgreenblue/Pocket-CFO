@@ -18,3 +18,18 @@ def db():
         os.remove(settings.db_path)
     repo.init_db()
     return repo
+
+
+@pytest.fixture
+def set_setting():
+    """تغییر موقتِ یک فیلد از `settings` (که frozen است، پس monkeypatch کار نمی‌کند)."""
+    from bot.config import settings
+    originals: list[tuple[str, object]] = []
+
+    def _set(name: str, value: object) -> None:
+        originals.append((name, getattr(settings, name)))
+        object.__setattr__(settings, name, value)
+
+    yield _set
+    for name, value in reversed(originals):
+        object.__setattr__(settings, name, value)

@@ -40,24 +40,27 @@ class AgentResult:
     debts_created: list[int] = field(default_factory=list)
     debts_updated: list[int] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # فقط در حالتِ only_transactions پر می‌شود: چیزهایی که مدل دید ولی عمداً ثبت نشدند.
+    dropped_kinds: list[str] = field(default_factory=list)
 
 
-async def transcribe(audio_ogg: bytes) -> str:
+async def transcribe(audio_ogg: bytes, audio_format: str = "ogg") -> str:
     """فقط رونویسی (برای ویس بلند که بعد وارد خط لوله‌ی چانکینگ می‌شود)."""
     messages = [
         {"role": "system", "content": "تو فقط رونویس هستی. متن کامل گفته‌ی فارسی کاربر را بدون توضیح برگردان."},
         {"role": "user", "content": [
             {"type": "text", "text": "این پیام صوتی را دقیق رونویسی کن."},
-            _audio_part(audio_ogg),
+            _audio_part(audio_ogg, audio_format),
         ]},
     ]
     msg = await chat(messages)
     return (msg.content or "").strip()
 
 
-def _audio_part(ogg_bytes: bytes) -> dict:
-    b64 = base64.b64encode(ogg_bytes).decode("ascii")
-    return {"type": "input_audio", "input_audio": {"data": b64, "format": "ogg"}}
+def _audio_part(audio_bytes: bytes, audio_format: str = "ogg") -> dict:
+    """ویسِ تلگرام همیشه ogg است؛ ویسِ شرتکاتِ iOS معمولاً m4a."""
+    b64 = base64.b64encode(audio_bytes).decode("ascii")
+    return {"type": "input_audio", "input_audio": {"data": b64, "format": audio_format}}
 
 
 def _history_messages(history: Optional[list[dict]]) -> list[dict]:
@@ -96,6 +99,8 @@ async def _run_extraction(
     history: Optional[list[dict]],
     profile: str,
     allowed_tags: list[str],
+    only_transactions: bool = False,
+    source: str = "chat",
 ) -> AgentResult:
     system = EXTRACT_SYSTEM.format(
         tags="، ".join(allowed_tags), default_currency=settings.default_currency,
@@ -116,9 +121,25 @@ async def _run_extraction(
     for item in data.get("transactions") or []:
         try:
             created.append(txn_service.create_from_item(
-                user_id, item, transcript=data.get("transcript", ""), source="chat"))
+                user_id, item, transcript=data.get("transcript", ""), source=source))
         except Exception:  # noqa: BLE001
             logger.exception("ساخت تراکنش ناموفق بود")
+
+    # درِ دومِ ورودی فقط «ثبتِ تراکنش» را می‌پذیرد: ویرایش، بدهی/طلب و هدف از این مسیر
+    # روی دیتابیس اثر نمی‌گذارند (چون کاربر آنجا کارت و تأییدی جلوی چشمش ندارد).
+    if only_transactions:
+        dropped: list[str] = []
+        if data.get("updates"):
+            dropped.append("ویرایشِ تراکنشِ قبلی")
+        if data.get("debts") or data.get("debt_updates"):
+            dropped.append("بدهی/طلب")
+        if data.get("goals") or data.get("goal_updates"):
+            dropped.append("هدف")
+        return AgentResult(
+            reply=(data.get("reply") or "").strip() or "ثبت شد ✅",
+            transcript=(data.get("transcript") or "").strip(),
+            created=created, dropped_kinds=dropped,
+        )
 
     updated: list[int] = []
     for upd in data.get("updates") or []:
@@ -204,8 +225,40 @@ async def converse_audio(*, audio_ogg: bytes, user_id: int, history=None, profil
                                  history=history, profile=profile, allowed_tags=allowed_tags or [])
 
 
-async def converse_batch(*, text_parts: list[str], audio_blobs: list[bytes], user_id: int,
-                         history=None, profile: str = "", allowed_tags=None) -> AgentResult:
+async def converse_expense_only(*, user_text: str = "", audio: Optional[tuple[bytes, str]] = None,
+                                user_id: int, history=None, profile: str = "",
+                                allowed_tags=None) -> AgentResult:
+    """ورودیِ درِ دوم (شرتکاتِ iOS): فقط خرج‌ها استخراج و ثبت می‌شوند.
+
+    عمداً بدون روتر است — هر پیامی که از این مسیر می‌آید نیتِ «ثبتِ خرج» دارد؛ سؤال و
+    گفتگو و گزارش جای خودشان در تلگرام است.
+    """
+    instruction = (
+        "کاربر این را از میان‌برِ گوشی‌اش فرستاده و فقط قصدِ ثبتِ خرج دارد. "
+        "فقط خرج‌ها را در transactions بگذار؛ سؤال نپرس و گزارش نده."
+    )
+    content: Union[str, list]
+    if audio is not None:
+        blob, fmt = audio
+        content = [
+            {"type": "text", "text": f"{instruction} این پیام صوتی فارسی را رونویسی کن و "
+                                     "خرج‌هایش را استخراج کن."},
+            _audio_part(blob, fmt),
+        ]
+        if user_text.strip():
+            content.append({"type": "text", "text": user_text.strip()})
+    else:
+        content = f"{instruction}\n\n{user_text}"
+    return await _run_extraction(user_content=content, has_audio=audio is not None,
+                                 user_id=user_id, history=history, profile=profile,
+                                 allowed_tags=allowed_tags or [], only_transactions=True,
+                                 source="shortcut")
+
+
+async def converse_batch(*, text_parts: list[str], audio_items: list[tuple[bytes, str]],
+                         user_id: int, history=None, profile: str = "",
+                         allowed_tags=None, only_transactions: bool = False,
+                         source: str = "chat") -> AgentResult:
     """چند متن و/یا چند ویس در یک درخواست (صفِ بعد-از-ساعت‌کاری)."""
     intro = ("این‌ها خرج‌هایی است که کاربر بعد از پایان سهمیه‌ی قبلی پشت‌سرهم گفته. "
              "همه را با هم و کامل ثبت کن (هر کدام یک یا چند تراکنش).")
@@ -213,11 +266,12 @@ async def converse_batch(*, text_parts: list[str], audio_blobs: list[bytes], use
     for t in text_parts:
         if t and t.strip():
             content.append({"type": "text", "text": t.strip()})
-    for blob in audio_blobs:
-        content.append(_audio_part(blob))
-    has_audio = bool(audio_blobs)
+    for blob, fmt in audio_items:
+        content.append(_audio_part(blob, fmt))
+    has_audio = bool(audio_items)
     return await _run_extraction(user_content=content, has_audio=has_audio, user_id=user_id,
-                                 history=history, profile=profile, allowed_tags=allowed_tags or [])
+                                 history=history, profile=profile, allowed_tags=allowed_tags or [],
+                                 only_transactions=only_transactions, source=source)
 
 
 async def answer_data(user_text: str, history: Optional[list[dict]], user_id: int) -> str:
