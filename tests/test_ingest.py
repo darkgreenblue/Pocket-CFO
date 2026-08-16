@@ -309,3 +309,84 @@ def test_fallback_request_id_separates_audio_from_text(ingest_env):
     text_key = ingest_env.fallback_request_id(USER, "", None)
     audio_key = ingest_env.fallback_request_id(USER, "", (b"blob", "m4a"))
     assert text_key != audio_key
+
+
+# ---------- قالبِ پاسخِ HTTP ----------
+#
+# مسیرِ میان‌بر (`/s/<token>`) باید **متنِ ساده** بدهد، نه JSON: خروجی‌اش مستقیم در
+# Show Notification می‌نشیند و اگر JSON باشد کاربر یک نوتیفیکیشنِ پر از `{"ok":true,…}`
+# می‌بیند و برای تمیزکردنش باید دو اکشنِ اضافه به میان‌بر بیفزاید.
+
+def _serve(bot, method, target, body=b""):
+    """یک درخواستِ HTTP کامل را به هندلرِ سرور می‌دهد و پاسخِ خام را برمی‌گرداند."""
+    from bot.ingest import server
+
+    class Reader:
+        def __init__(self, data): self._data = data
+        async def readuntil(self, sep):
+            head, _, rest = self._data.partition(sep)
+            self._data = rest
+            return head + sep
+        async def readexactly(self, n):
+            chunk, self._data = self._data[:n], self._data[n:]
+            return chunk
+
+    class Writer:
+        def __init__(self): self.chunks = []
+        def write(self, data): self.chunks.append(data)
+        async def drain(self): pass
+        def close(self): pass
+
+    request = (f"{method} {target} HTTP/1.1\r\nContent-Length: {len(body)}\r\n"
+               "\r\n").encode() + body
+    writer = Writer()
+    asyncio.run(server._client(bot, Reader(request), writer))
+    return b"".join(writer.chunks).decode("utf-8")
+
+
+def _split(raw):
+    head, _, body = raw.partition("\r\n\r\n")
+    return head, body
+
+
+def test_shortcut_route_answers_plain_text_not_json(ingest_env, db, monkeypatch):
+    _fake_extract(monkeypatch, {
+        "transcript": "قهوه ۹۰ تومن",
+        "transactions": [{"title": "قهوه", "amount": 90000, "currency": "toman"}],
+    })
+    head, body = _split(_serve(FakeBot(), "POST", "/s/" + "t" * 32,
+                               "قهوه ۹۰ تومن".encode("utf-8")))
+
+    assert "200 OK" in head
+    assert "text/plain" in head
+    assert body == ingest_env.MSG_RECORDED       # دقیقاً همان یک خط، بدون آکولاد
+    assert "{" not in body
+
+
+def test_shortcut_route_reports_errors_as_plain_text_too(ingest_env, db):
+    """پیامِ خطا هم روی نوتیفیکیشن می‌نشیند، پس نباید JSON باشد."""
+    head, body = _split(_serve(FakeBot(), "POST", "/s/wrong-token", b"x"))
+
+    assert "401" in head
+    assert "text/plain" in head
+    assert "{" not in body
+
+
+def test_programmatic_route_still_answers_json(ingest_env, db, monkeypatch):
+    """`/ingest` کالرش کد است، نه چشمِ آدم — قالبش JSON می‌ماند."""
+    _fake_extract(monkeypatch, {
+        "transcript": "نان ۳۰ تومن",
+        "transactions": [{"title": "نان", "amount": 30000, "currency": "toman"}],
+    })
+    payload = json.dumps({"token": "t" * 32, "request_id": "json-1", "text": "نان ۳۰ تومن"})
+    head, body = _split(_serve(FakeBot(), "POST", "/ingest", payload.encode("utf-8")))
+
+    assert "200 OK" in head
+    assert "application/json" in head
+    assert json.loads(body)["status"] == "recorded"
+
+
+def test_health_stays_json(ingest_env, db):
+    head, body = _split(_serve(FakeBot(), "GET", "/health"))
+    assert "application/json" in head
+    assert json.loads(body) == {"ok": True}
