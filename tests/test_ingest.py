@@ -390,3 +390,32 @@ def test_health_stays_json(ingest_env, db):
     head, body = _split(_serve(FakeBot(), "GET", "/health"))
     assert "application/json" in head
     assert json.loads(body) == {"ok": True}
+
+
+# ---------- راهنمای /shortcut ----------
+
+def _render(icloud: str) -> str:
+    """همان انتخابی که cmd_shortcut می‌کند: با لینکِ iCloud یا بدونش."""
+    from bot.handlers.commands import SHORTCUT_GUIDE, SHORTCUT_MANUAL_STEPS
+    base = "http://example.com:8791/s/TOKEN"
+    template = SHORTCUT_GUIDE if icloud else SHORTCUT_MANUAL_STEPS
+    return template.format(url=base, audio_url=f"{base}?audio=m4a",
+                           health_url="http://example.com:8791/health", icloud_url=icloud)
+
+
+def test_guide_uses_icloud_link_when_configured():
+    text = _render("https://www.icloud.com/shortcuts/abc")
+    assert "https://www.icloud.com/shortcuts/abc" in text
+    assert "?audio=m4a" in text          # کاربر باید آدرسِ شخصی‌اش را جایگزین کند
+
+
+def test_guide_falls_back_to_manual_build_without_icloud_link():
+    """نبودِ لینکِ آماده نباید کاربر را به بن‌بست ببرد."""
+    text = _render("")
+    assert "Record Audio" in text and "Get Contents of URL" in text
+    assert "icloud.com" not in text
+
+
+def test_both_guides_fit_in_one_telegram_message():
+    for icloud in ("https://www.icloud.com/shortcuts/abc", ""):
+        assert len(_render(icloud)) < 4096

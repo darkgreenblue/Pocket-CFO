@@ -55,6 +55,7 @@ class Settings:
     ingest_max_body_bytes: int
     ingest_audio_dir: str
     ingest_public_url: str
+    ingest_shortcut_icloud_url: str
 
     @property
     def ingest_enabled(self) -> bool:
@@ -121,6 +122,11 @@ INGEST_AUDIO_DIR = "var/ingest_audio"   # ویسِ صف‌شده تا صبح ا�
 # آدرسی که گوشیِ کاربر می‌بیند (مثل http://1.2.3.4:8791). تا وقتی ست نشود، دستورِ
 # /shortcut کار نمی‌کند — چون بدون آدرس، توکن به‌تنهایی به درد کاربر نمی‌خورد.
 INGEST_PUBLIC_URL = ""
+
+# لینکِ iCloudِ میان‌برِ آماده. یک‌بار روی یک آیفون ساخته می‌شود و برای همه‌ی کاربرها
+# همین یکی است؛ هر کاربر بعد از نصب فقط آدرسِ شخصیِ خودش را داخلش می‌گذارد.
+# خالی‌بودنش یعنی راهنما به ساختِ دستیِ سه‌اکشنی برمی‌گردد.
+INGEST_SHORTCUT_ICLOUD_URL = "https://www.icloud.com/shortcuts/4611ff8963c84bc5a4716a8020f8d59f"
 
 
 def _parse_ingest_tokens(raw: str) -> dict[str, int]:
@@ -214,6 +220,8 @@ def load_settings() -> Settings:
         ingest_max_body_bytes=int(_get("INGEST_MAX_BODY_MB", str(INGEST_MAX_BODY_MB))) * 1024 * 1024,
         ingest_audio_dir=_get("INGEST_AUDIO_DIR", INGEST_AUDIO_DIR),
         ingest_public_url=(_get("INGEST_PUBLIC_URL", INGEST_PUBLIC_URL) or "").rstrip("/"),
+        ingest_shortcut_icloud_url=_get("INGEST_SHORTCUT_ICLOUD_URL",
+                                        INGEST_SHORTCUT_ICLOUD_URL) or "",
     )
 
 
