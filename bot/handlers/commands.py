@@ -120,7 +120,10 @@ SHORTCUT_GUIDE = """📱 ثبتِ خرج با سه ضربه پشتِ گوشی
 
 • `Record Audio` — روی `Start Recording: Immediately` و `Finish Recording: On Tap`
 • `Get Contents of URL` — آدرسِ زیر، `Method: POST`، و در Request Body گزینه‌ی `File` را بزن و متغیرِ `Recorded Audio` را بگذار
-• `Show Notification` — متنِ پاسخ
+• `Show Notification` — روی فیلدِ متن ضربه بزن و از لیستِ متغیرها همان خروجیِ اکشنِ قبلی
+  (`Contents of URL`) را انتخاب کن؛ چیزی خودت تایپ نمی‌کنی. پاسخِ سرور یک JSONِ کوتاه
+  است (مثلاً `{{"ok": true, "status": "recorded", "message": "ثبت شد ✅ ..."}}`)، پس
+  نوتیفیکیشن دقیقاً همین متن را نشان می‌دهد — قابلِ‌خواندن است، فقط شیک نیست.
 
 آدرسی که در اکشنِ دوم می‌گذاری (**مثل رمز باهاش رفتار کن** — هرکس داشته باشد می‌تواند روی دفترِ مالیِ تو خرج ثبت کند):
 
