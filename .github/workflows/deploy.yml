@@ -43,7 +43,8 @@ jobs:
         run: |
           ssh -p "${SSH_PORT:-22}" -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" "mkdir -p ~/pocket-cfo"
           scp -P "${SSH_PORT:-22}" -i ~/.ssh/id_deploy \
-            docker-compose.yml image.tar.gz "$SSH_USER@$SSH_HOST:~/pocket-cfo/"
+            docker-compose.yml docker-compose.ingest.yml image.tar.gz \
+            "$SSH_USER@$SSH_HOST:~/pocket-cfo/"
 
       - name: Load image & restart container
         env:
@@ -67,13 +68,26 @@ jobs:
             docker load -i image.tar.gz
             set -a; . ./.deploy.env; set +a
 
-            # پورتِ درِ دومِ ورودی. فقط اگر ufw فعال باشد؛ فایروالِ ابریِ ارائه‌دهنده
-            # (اگر داشته باشد) از اینجا قابلِ تنظیم نیست.
+            # اول کانتینرِ قبلی را ببند تا bindهای خودمانِ قبلی آزاد شوند.
+            docker compose down --remove-orphans || true
+
+            # فقط اگر ufw فعال باشد؛ فایروالِ ابریِ ارائه‌دهنده از اینجا قابلِ تنظیم نیست.
             if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
               ufw allow 8081/tcp >/dev/null 2>&1 || true
             fi
 
-            docker compose up -d
+            # با درِ دومِ ورودی تلاش می‌کنیم؛ اگر پورت گرفته بود، بدونِ آن بالا می‌آییم.
+            # عمداً پورت را از قبل «پروب» نمی‌کنیم: ss/netstat ممکن است روی سرور نباشند
+            # و آن‌وقت پروب بی‌صدا «آزاد» می‌گوید و همین‌جا می‌ترکد. تلاشِ واقعی دروغ نمی‌گوید.
+            if docker compose -f docker-compose.yml -f docker-compose.ingest.yml up -d; then
+              echo "درِ دومِ ورودی روی ۸۰۸۱ فعال است."
+            else
+              echo "::warning::پورت ۸۰۸۱ در دسترس نبود — ربات بدون درِ دومِ ورودی بالا می‌آید (میان‌برِ iOS کار نمی‌کند)."
+              docker ps --format "{{.Names}} → {{.Ports}}"
+              docker compose -f docker-compose.yml up -d
+            fi
+
             rm -f image.tar.gz
             docker image prune -f
+            docker compose ps
           '
