@@ -116,26 +116,29 @@ SHORTCUT_DISABLED = (
 
 SHORTCUT_GUIDE = """📱 ثبتِ خرج با سه ضربه پشتِ گوشی
 
-این آدرسِ شخصیِ توست. **مثل رمز باهاش رفتار کن** — هرکس داشته باشد می‌تواند روی دفترِ مالیِ تو خرج ثبت کند:
-
-`{url}`
-
 **۱) میان‌بر را بساز** — در اپ Shortcuts یک میان‌برِ تازه با همین سه اکشن:
 
-• `Dictate Text` — زبان: Persian
-• `Get Contents of URL` — آدرسِ بالا، Method روی `POST`، و در Request Body گزینه‌ی `File` را بزن و متغیرِ `Dictated Text` را بگذار
+• `Record Audio` — روی `Start Recording: Immediately` و `Finish Recording: On Tap`
+• `Get Contents of URL` — آدرسِ زیر، `Method: POST`، و در Request Body گزینه‌ی `File` را بزن و متغیرِ `Recorded Audio` را بگذار
 • `Show Notification` — متنِ پاسخ
+
+آدرسی که در اکشنِ دوم می‌گذاری (**مثل رمز باهاش رفتار کن** — هرکس داشته باشد می‌تواند روی دفترِ مالیِ تو خرج ثبت کند):
+
+`{audio_url}`
 
 **۲) وصلش کن به پشتِ گوشی**
 Settings › Accessibility › Touch › Back Tap › Triple Tap → همین میان‌بر
 
-**۳) تمام.** سه ضربه پشتِ گوشی → حرف بزن → کارتش همین‌جا برایت می‌آید.
+**۳) تمام.** سه ضربه پشتِ گوشی → حرف بزن → بزن Stop → کارتش همین‌جا برایت می‌آید.
+
+ℹ️ چرا ویس و نه دیکته‌ی گوشی؟ چون اپل **فارسی را در Dictation پشتیبانی نمی‌کند**. پس ویس را می‌فرستیم و رونویسی سمتِ سرور انجام می‌شود — که برای فارسی دقیق‌تر هم هست.
+
+⌨️ اگر ترجیح می‌دهی تایپ کنی: به‌جای `Record Audio` از `Ask for Input` استفاده کن، متغیرش را در Request Body بگذار، و آدرس را بدونِ `?audio=m4a` بنویس:
+`{url}`
 
 🔌 اگر کار نکرد، اول این را در Safari گوشی باز کن تا ببینی اصلاً به سرور می‌رسی یا نه:
 {health_url}
 باید `{{"ok": true}}` نشان بدهد. اگر نداد، مشکل از میان‌بر نیست — گوشی به سرور نمی‌رسد.
-
-🎙 اگر ویس می‌خواهی به‌جای دیکته: به‌جای `Dictate Text` از `Record Audio` استفاده کن و به آخرِ آدرس `?audio=m4a` اضافه کن.
 
 ⚠️ از این مسیر فقط **خرج** ثبت می‌شود. بدهی، هدف و گزارش را همین‌جا در تلگرام بگو.
 
@@ -159,9 +162,11 @@ async def cmd_shortcut(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     token = ingest_service.issue_token(user.id)
+    base = f"{settings.ingest_public_url}/s/{token}"
     await update.message.reply_text(
         SHORTCUT_GUIDE.format(
-            url=f"{settings.ingest_public_url}/s/{token}",
+            url=base,
+            audio_url=f"{base}?audio=m4a",
             health_url=f"{settings.ingest_public_url}/health",
         ),
         parse_mode="Markdown",
