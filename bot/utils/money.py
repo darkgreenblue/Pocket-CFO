@@ -40,18 +40,46 @@ def to_persian_digits(text: str) -> str:
     return str(text).translate(_LATIN_TO_PERSIAN)
 
 
-def parse_amount(text: str) -> Optional[int]:
-    """از یک رشته‌ی ورودی کاربر، یک عدد صحیح بیرون می‌کشد.
+# جداکننده‌ی هزارگان همیشه هزارگان است؛ ولی «.» و «٫» و «/» می‌توانند اعشار باشند.
+# («/» چون روی کیبورد فارسی ممیزِ رایج است: ۱/۴ یعنی ۱.۴)
+_THOUSANDS_CHARS = ",٬'’ "
+_DECIMAL_CHARS = ".٫/"
 
-    جداکننده‌ها، فاصله و کاراکترهای غیرعددی نادیده گرفته می‌شوند.
-    اگر هیچ رقمی نباشد ``None`` برمی‌گرداند.
+
+def parse_amount(text: str):
+    """از ورودی کاربر یک مبلغ بیرون می‌کشد: int، یا float اگر واقعاً اعشاری باشد.
+
+    ⚠️ اعشار برای ارز خارجی حیاتی است: «۱.۴ دلار» باید ۱.۴ بماند، نه ۱۴. پس نمی‌شود
+    مثل قبل همه‌ی غیررقم‌ها را دور ریخت.
+
+    قاعده‌ی تفکیک (هم‌راستا با نحوه‌ی نوشتنِ واقعیِ آدم‌ها):
+    — «,» و «٬» همیشه هزارگان‌اند.
+    — «.» / «٫» / «/» فقط وقتی اعشارند که **یک‌بار** آمده باشند و بعدشان ۱ یا ۲ رقم باشد.
+      پس «۱.۴»→۱.۴ و «۱۲.۷۵»→۱۲.۷۵، ولی «۱.۵۰۰»→۱۵۰۰ و «۲۵۰.۰۰۰»→۲۵۰۰۰۰.
+    اگر هیچ رقمی نباشد ``None``.
     """
     if not text:
         return None
-    digits = "".join(ch for ch in normalize_digits(text) if ch.isdigit())
-    if not digits:
+    raw = normalize_digits(text)
+    for ch in _THOUSANDS_CHARS:
+        raw = raw.replace(ch, "")
+
+    # فقط رقم و جداکننده‌های اعشاری را نگه می‌داریم (واحد پول، ایموجی و… دور ریخته می‌شوند).
+    kept = "".join(ch for ch in raw if ch.isdigit() or ch in _DECIMAL_CHARS)
+    seps = [ch for ch in kept if ch in _DECIMAL_CHARS]
+    digits_only = "".join(ch for ch in kept if ch.isdigit())
+    if not digits_only:
         return None
-    return int(digits)
+
+    if len(seps) == 1:
+        whole, _, frac = kept.partition(seps[0])
+        whole_digits = "".join(ch for ch in whole if ch.isdigit())
+        frac_digits = "".join(ch for ch in frac if ch.isdigit())
+        if frac_digits and len(frac_digits) <= 2:
+            value = float(f"{whole_digits or '0'}.{frac_digits}")
+            return int(value) if value.is_integer() else value
+
+    return int(digits_only)
 
 
 def group_digits(value: int) -> str:
