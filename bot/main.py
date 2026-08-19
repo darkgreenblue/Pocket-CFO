@@ -10,6 +10,7 @@ try:
 except Exception:  # noqa: BLE001 — اگر دیتابیس tz نبود، از UTC استفاده کن
     _TEHRAN = dt.timezone(dt.timedelta(hours=3, minutes=30))
 
+from telegram import BotCommand
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -21,7 +22,13 @@ from telegram.ext import (
 from bot.config import settings
 from bot.db import repo
 from bot.handlers.callbacks import on_callback
-from bot.handlers.commands import cmd_household, cmd_report, cmd_shortcut, cmd_start
+from bot.handlers.commands import (
+    cmd_household,
+    cmd_menu,
+    cmd_report,
+    cmd_shortcut,
+    cmd_start,
+)
 from bot.handlers.messages import handle_text, handle_unsupported, handle_voice
 from bot.ingest.server import IngestServer
 from bot.services.ingest import deliver_undelivered_cards, purge_old_requests
@@ -39,7 +46,22 @@ def build_application() -> Application:
     repo.init_db()
     ingest_server = IngestServer()
 
+    # دکمه‌ی «Menu» کنارِ فیلدِ تایپ، فهرستِ دستورهای ثبت‌شده‌ی ربات است. تا وقتی چیزی
+    # ثبت نشده باشد، آن دکمه اصلاً ظاهر نمی‌شود — به همین دلیل کاربر راهی برای رسیدن به
+    # منو نداشت اگر کیبوردِ پایین را بسته بود.
+    BOT_COMMANDS = [
+        BotCommand("start", "شروع و نمایش منو"),
+        BotCommand("menu", "برگرداندن دکمه‌های منو"),
+        BotCommand("report", "گزارش خرج‌ها"),
+        BotCommand("household", "خانوار و اعضایش"),
+        BotCommand("shortcut", "میان‌برِ گوشی برای ثبتِ سریع"),
+    ]
+
     async def _open_ingest(app: Application) -> None:
+        try:
+            await app.bot.set_my_commands(BOT_COMMANDS)
+        except Exception:  # noqa: BLE001 — نبودِ منو نباید جلوی بالا آمدنِ ربات را بگیرد
+            logger.warning("ثبتِ دستورهای ربات (منو) ناموفق بود", exc_info=True)
         await ingest_server.start(app.bot)
 
     async def _close_ingest(_app: Application) -> None:
@@ -54,6 +76,7 @@ def build_application() -> Application:
     )
 
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("report", cmd_report))
     app.add_handler(CommandHandler("household", cmd_household))
     app.add_handler(CommandHandler("shortcut", cmd_shortcut))

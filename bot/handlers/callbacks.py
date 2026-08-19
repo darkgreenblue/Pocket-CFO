@@ -9,7 +9,7 @@ from telegram.ext import ContextTypes
 from bot.db import repo
 from bot.flows.draft_flow import AWAITING_KEY, EXPANDED_KEY
 from bot.handlers import cards
-from bot.handlers.keyboards import permission_keyboard
+from bot.handlers.keyboards import cancel_keyboard, permission_keyboard
 from bot.services import debts as debts_service
 from bot.services import household as household_service
 from bot.services.reports import build_report
@@ -19,6 +19,35 @@ logger = logging.getLogger(__name__)
 GOAL_EXPANDED_KEY = "expanded_goals"
 DEBT_EXPANDED_KEY = "expanded_debts"
 INVITE_KEY = "hh_invite"
+
+CANCELLED = "باشه، چیزی تغییر نکرد."
+
+
+async def start_edit(query, context: ContextTypes.DEFAULT_TYPE, *, kind: str,
+                     action: str, obj_id: int, prompt: str) -> None:
+    """پرسشِ ویرایش را می‌فرستد و state را نگه می‌دارد.
+
+    شناسه‌ی پیام‌های فرستاده‌شده در `cleanup` جمع می‌شود تا موقع انصراف (یا بعد از
+    ویرایشِ موفق) پاک شوند و گفتگو به حالتِ اولش برگردد.
+    """
+    message = await query.message.reply_text(
+        prompt, reply_markup=cancel_keyboard(),
+        reply_to_message_id=query.message.message_id,
+    )
+    context.user_data[AWAITING_KEY] = {
+        "kind": kind, "action": action, "id": obj_id,
+        "chat_id": message.chat_id, "cleanup": [message.message_id],
+    }
+
+
+async def clear_edit_messages(bot, awaiting: dict) -> None:
+    """پیام‌های موقتِ همین ویرایش را پاک می‌کند (پرسش و خطاهای احتمالی)."""
+    chat_id = awaiting.get("chat_id")
+    for message_id in awaiting.get("cleanup") or []:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except Exception:  # noqa: BLE001 — پیامِ قدیمی/پاک‌شده اهمیتی ندارد
+            pass
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -33,6 +62,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if action == "report":
         await query.answer()
         await query.edit_message_text(build_report(user.id, period=arg))
+        return
+
+    if action == "editcancel":
+        awaiting = context.user_data.pop(AWAITING_KEY, None)
+        await query.answer("لغو شد.")
+        if awaiting:
+            # همه‌چیز به حالتِ قبل از زدنِ دکمه‌ی ویرایش برمی‌گردد: پرسش و خطاها پاک.
+            await clear_edit_messages(context.bot, awaiting)
         return
 
     if action.startswith("hh"):
@@ -55,14 +92,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if action == "editamt":
         await query.answer()
-        context.user_data[AWAITING_KEY] = {"kind": "txn", "action": "amount", "id": txn_id}
-        await query.message.reply_text("مبلغ این خرج را فقط با رقم بفرست (مثلاً ۲۵۰۰۰۰).",
-                                       reply_to_message_id=query.message.message_id)
+        await start_edit(query, context, kind="txn", action="amount", obj_id=txn_id,
+                         prompt="مبلغ این خرج را بفرست (مثلاً ۲۵۰۰۰۰ یا ۱.۴ برای ارز).")
     elif action == "edittitle":
         await query.answer()
-        context.user_data[AWAITING_KEY] = {"kind": "txn", "action": "title", "id": txn_id}
-        await query.message.reply_text("عنوان کوتاه این خرج را بنویس.",
-                                       reply_to_message_id=query.message.message_id)
+        await start_edit(query, context, kind="txn", action="title", obj_id=txn_id,
+                         prompt="عنوان کوتاه این خرج را بنویس.")
     elif action == "details":
         await query.answer()
         expanded = context.user_data.setdefault(EXPANDED_KEY, set())
@@ -85,14 +120,12 @@ async def _on_goal(query, context: ContextTypes.DEFAULT_TYPE, action: str, goal_
 
     if action == "goaleditlimit":
         await query.answer()
-        context.user_data[AWAITING_KEY] = {"kind": "goal", "action": "limit", "id": goal_id}
-        await query.message.reply_text("سقف بودجه را فقط با رقم بفرست (تومان).",
-                                       reply_to_message_id=query.message.message_id)
+        await start_edit(query, context, kind="goal", action="limit", obj_id=goal_id,
+                         prompt="سقف بودجه را فقط با رقم بفرست (تومان).")
     elif action == "goaledittopic":
         await query.answer()
-        context.user_data[AWAITING_KEY] = {"kind": "goal", "action": "topic", "id": goal_id}
-        await query.message.reply_text("موضوع این هدف را بنویس (مثلاً رستوران).",
-                                       reply_to_message_id=query.message.message_id)
+        await start_edit(query, context, kind="goal", action="topic", obj_id=goal_id,
+                         prompt="موضوع این هدف را بنویس (مثلاً رستوران).")
     elif action == "goaldetails":
         await query.answer()
         expanded = context.user_data.setdefault(GOAL_EXPANDED_KEY, set())
@@ -116,14 +149,12 @@ async def _on_debt(query, context: ContextTypes.DEFAULT_TYPE, action: str,
 
     if action == "debtamt":
         await query.answer()
-        context.user_data[AWAITING_KEY] = {"kind": "debt", "action": "amount", "id": debt_id}
-        await query.message.reply_text("مبلغ را فقط با رقم بفرست (مثلاً ۵۰۰۰۰۰).",
-                                       reply_to_message_id=query.message.message_id)
+        await start_edit(query, context, kind="debt", action="amount", obj_id=debt_id,
+                         prompt="مبلغ را بفرست (مثلاً ۵۰۰۰۰۰ یا ۱.۴ برای ارز).")
     elif action == "debtparty":
         await query.answer()
-        context.user_data[AWAITING_KEY] = {"kind": "debt", "action": "counterparty", "id": debt_id}
-        await query.message.reply_text("طرفِ حساب کیست؟ (مثلاً «رضا»)",
-                                       reply_to_message_id=query.message.message_id)
+        await start_edit(query, context, kind="debt", action="counterparty", obj_id=debt_id,
+                         prompt="طرفِ حساب کیست؟ (مثلاً «رضا»)")
     elif action == "debtdetails":
         await query.answer()
         expanded = context.user_data.setdefault(DEBT_EXPANDED_KEY, set())

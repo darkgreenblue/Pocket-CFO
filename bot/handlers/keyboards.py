@@ -16,12 +16,22 @@ BTN_HOUSEHOLD = "👨‍👩‍👧 افزودن عضو به خانوار"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
+    """منوی پایین. `is_persistent` یعنی تلگرام جمعش نکند و همیشه در دسترس بماند —
+    وگرنه کاربر بعد از یک‌بار بستن، تا `/start` بعدی دیگر دکمه‌ها را نمی‌بیند."""
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton(BTN_ADD), KeyboardButton(BTN_REPORT)],
             [KeyboardButton(BTN_HOUSEHOLD)],
         ],
         resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def cancel_keyboard() -> InlineKeyboardMarkup:
+    """تنها دکمه‌ی هر پرسشِ ویرایش: راهِ خروج بدون جواب‌دادن."""
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("✖️ انصراف", callback_data="editcancel:0")]]
     )
 
 

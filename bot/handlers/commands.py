@@ -82,6 +82,20 @@ async def _accept_invite(update: Update, token: str, user) -> None:
     )
 
 
+MENU_TEXT = (
+    "منوی اصلی 👇 هر وقت دکمه‌ها را نبینی، همین `/menu` را بزن تا برگردند."
+)
+
+
+async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """کیبوردِ پایین را دوباره می‌چسباند — بدون متنِ بلندِ خوشامد."""
+    user = update.effective_user
+    if user and not household_service.authorized(user.id):
+        return
+    household_service.touch(user.id, _full_name(user))
+    await update.message.reply_text(MENU_TEXT, reply_markup=main_menu())
+
+
 async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if user and not household_service.authorized(user.id):

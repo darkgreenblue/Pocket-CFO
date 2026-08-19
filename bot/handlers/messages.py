@@ -18,10 +18,12 @@ from bot.handlers.cards import (
     send_debt_card,
     send_goal_card,
 )
+from bot.handlers.callbacks import clear_edit_messages
 from bot.handlers.keyboards import (
     BTN_ADD,
     BTN_HOUSEHOLD,
     BTN_REPORT,
+    cancel_keyboard,
     relation_keyboard,
     report_period_keyboard,
 )
@@ -34,7 +36,7 @@ from bot.services import household as household_service
 from bot.services import memory, pending
 from bot.services import tags as tags_service
 from bot.utils import ratelimit
-from bot.utils.money import parse_amount
+from bot.utils.money import format_amount, parse_amount
 
 TOO_LONG_MSG = "این پیام خیلی طولانیه و کامل پردازش نمی‌شه 🙏 لطفاً کوتاه‌تر و در چند پیام بفرست."
 MULTIPART_REPLY = "همه رو ثبت کردم؛ کارت‌ها پایین 👇"
@@ -138,7 +140,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             f"این ویس طولانیه. لطفاً کوتاه‌تر از {settings.max_voice_seconds // 60} دقیقه بفرست."
         )
         return
-    if context.user_data.pop(AWAITING_KEY, None):
+    awaiting = context.user_data.pop(AWAITING_KEY, None)
+    if awaiting:
+        await clear_edit_messages(context.bot, awaiting)
         await update.message.reply_text("ویرایش قبلی لغو شد؛ این پیام صوتی جدید را پردازش می‌کنم.")
     if _rate_limited(update.effective_user.id):
         await update.message.reply_text("یه کم آروم‌تر 🙂 چند لحظه دیگه دوباره بفرست.")
@@ -336,6 +340,24 @@ async def _process(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
 
 # ---------- ویرایش دکمه‌ای ----------
 
+async def _finish_edit(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                       awaiting: dict, confirmation: str) -> None:
+    """پایانِ موفقِ ویرایش: پیام‌های موقت پاک، state پاک، و یک تأییدِ صریح به کاربر.
+
+    قبلاً هیچ بازخوردی نبود و کاربر نمی‌فهمید ویرایش گرفت یا نه؛ کارت بی‌صدا عوض می‌شد.
+    """
+    await clear_edit_messages(context.bot, awaiting)
+    context.user_data.pop(AWAITING_KEY, None)
+    await update.message.reply_text(confirmation)
+
+
+async def _reject_edit(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                       awaiting: dict, message: str) -> None:
+    """ورودی نامعتبر: state نگه داشته می‌شود تا دوباره تلاش کند، ولی خطا هم باید بعداً پاک شود."""
+    sent = await update.message.reply_text(message, reply_markup=cancel_keyboard())
+    awaiting.setdefault("cleanup", []).append(sent.message_id)
+
+
 async def _apply_button_edit(update: Update, context: ContextTypes.DEFAULT_TYPE,
                              awaiting: dict, text: str) -> None:
     kind = awaiting.get("kind", "txn")
@@ -344,54 +366,66 @@ async def _apply_button_edit(update: Update, context: ContextTypes.DEFAULT_TYPE,
     user_id = update.effective_user.id
 
     if kind == "debt":
-        if repo.get_debt(obj_id) is None:
-            context.user_data.pop(AWAITING_KEY, None)
-            await update.message.reply_text("این مورد دیگر وجود ندارد.")
+        debt = repo.get_debt(obj_id)
+        if debt is None:
+            await _finish_edit(update, context, awaiting, "این مورد دیگر وجود ندارد.")
             return
         if awaiting["action"] == "amount":
             value = parse_amount(text)
             if value is None:
-                await update.message.reply_text("عدد معتبر نبود. فقط رقم بفرست (مثلاً ۵۰۰۰۰۰).")
+                await _reject_edit(update, context, awaiting,
+                                   "عدد معتبر نبود. فقط رقم بفرست (مثلاً ۵۰۰۰۰۰).")
                 return
             debts_service.apply_update(user_id, obj_id, {"amount": value})
+            currency = (repo.get_debt(obj_id) or {}).get("currency_display", "toman")
+            confirmation = f"✅ مبلغ شد {format_amount(value, currency)}"
         else:  # counterparty
-            debts_service.apply_update(user_id, obj_id, {"counterparty": text.strip()})
-        context.user_data.pop(AWAITING_KEY, None)
+            party = text.strip()
+            debts_service.apply_update(user_id, obj_id, {"counterparty": party})
+            confirmation = f"✅ طرفِ حساب شد «{party}»"
+        await _finish_edit(update, context, awaiting, confirmation)
         await refresh_debt_card(context.bot, chat_id, obj_id)
         return
 
     if kind == "goal":
         if repo.get_goal(obj_id) is None:
-            context.user_data.pop(AWAITING_KEY, None)
-            await update.message.reply_text("این هدف دیگر وجود ندارد.")
+            await _finish_edit(update, context, awaiting, "این هدف دیگر وجود ندارد.")
             return
         if awaiting["action"] == "limit":
             value = parse_amount(text)
             if value is None:
-                await update.message.reply_text("عدد معتبر نبود. فقط رقم بفرست.")
+                await _reject_edit(update, context, awaiting,
+                                   "عدد معتبر نبود. فقط رقم بفرست.")
                 return
             repo.update_goal(obj_id, limit_amount=value)
+            confirmation = f"✅ سقف این هدف شد {format_amount(value, 'toman')}"
         else:  # topic
-            goals_service.apply_update(update.effective_user.id, obj_id, {"topic": text.strip()})
+            topic = text.strip()
+            goals_service.apply_update(user_id, obj_id, {"topic": topic})
+            confirmation = f"✅ موضوع این هدف شد «{topic}»"
         goals_service._sync_status(obj_id)
-        context.user_data.pop(AWAITING_KEY, None)
+        await _finish_edit(update, context, awaiting, confirmation)
         await refresh_goal_card(context.bot, chat_id, obj_id)
-        await goals_service.evaluate_and_alert(context.bot, update.effective_user.id)
+        await goals_service.evaluate_and_alert(context.bot, user_id)
         return
 
-    if repo.get_transaction(obj_id) is None:
-        context.user_data.pop(AWAITING_KEY, None)
-        await update.message.reply_text("این تراکنش دیگر وجود ندارد.")
+    txn = repo.get_transaction(obj_id)
+    if txn is None:
+        await _finish_edit(update, context, awaiting, "این تراکنش دیگر وجود ندارد.")
         return
     if awaiting["action"] == "amount":
         value = parse_amount(text)
         if value is None:
-            await update.message.reply_text("عدد معتبر نبود. فقط رقم بفرست (مثلاً ۲۵۰۰۰۰).")
+            await _reject_edit(update, context, awaiting,
+                               "عدد معتبر نبود. فقط رقم بفرست (مثلاً ۲۵۰۰۰۰).")
             return
         repo.update_transaction(obj_id, amount=value)
+        confirmation = f"✅ مبلغ شد {format_amount(value, txn.get('currency_display', 'toman'))}"
     else:  # title
-        repo.update_transaction(obj_id, title=text.strip())
+        title = text.strip()
+        repo.update_transaction(obj_id, title=title)
+        confirmation = f"✅ عنوان شد «{title}»"
     repo.sync_status(obj_id)
-    context.user_data.pop(AWAITING_KEY, None)
+    await _finish_edit(update, context, awaiting, confirmation)
     await refresh_card(context.bot, chat_id, obj_id)
-    await goals_service.evaluate_and_alert(context.bot, update.effective_user.id)
+    await goals_service.evaluate_and_alert(context.bot, user_id)
