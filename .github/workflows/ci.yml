@@ -1,9 +1,22 @@
 name: CI
 
+# ⏱ این ریپو private است و دقیقه‌های Actions محدودند، پس هر اجرای اضافه هزینه دارد.
+# قبلاً `push:` (همه‌ی برنچ‌ها) و `pull_request:` با هم بودند و هر کامیتِ روی یک PR
+# **دو بار** تست می‌شد — دقیقاً یک SHA، دو اجرا. حالا:
+#   • push فقط روی برنچ اصلی (تا مرج‌ها هم بررسی شوند)
+#   • pull_request برای بقیه‌ی کارها
 on:
   push:
+    branches:
+      - claude/festive-meitner-zex34x
   pull_request:
   workflow_dispatch:
+
+# پوشِ تازه (یا force-push) اجرای قبلیِ همان برنچ را لغو می‌کند؛ نتیجه‌اش دیگر به کار
+# نمی‌آید و فقط دقیقه می‌سوزاند.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -13,6 +26,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip                 # نصبِ وابستگی‌ها را از ~۱۵ ثانیه به چند ثانیه می‌آورد
+          cache-dependency-path: requirements.txt
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
