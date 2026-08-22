@@ -226,12 +226,17 @@ async def converse_audio(*, audio_ogg: bytes, user_id: int, history=None, profil
 
 
 async def converse_expense_only(*, user_text: str = "", audio: Optional[tuple[bytes, str]] = None,
-                                user_id: int, history=None, profile: str = "",
+                                user_id: int, profile: str = "",
                                 allowed_tags=None) -> AgentResult:
     """ورودیِ درِ دوم (شرتکاتِ iOS): فقط خرج‌ها استخراج و ثبت می‌شوند.
 
     عمداً بدون روتر است — هر پیامی که از این مسیر می‌آید نیتِ «ثبتِ خرج» دارد؛ سؤال و
     گفتگو و گزارش جای خودشان در تلگرام است.
+
+    ⚠️ و عمداً **بدون تاریخچه**: این مسیر یک‌شات است و هیچ کانتکستی لازم ندارد. وقتی
+    خرج‌های قبلیِ همان روز به‌عنوان پیام‌های کاربر جلوی مدل گذاشته می‌شدند، مدل کلِ آن
+    فهرست را «خرج‌هایی برای ثبت» می‌دید و همه را دوباره می‌ساخت — ششمین ثبتِ روز، شش
+    کارتِ تازه تولید می‌کرد. نبودِ تاریخچه ریشه‌ی آن باگ را می‌زند، نه علائمش را.
     """
     instruction = (
         "کاربر این را از میان‌برِ گوشی‌اش فرستاده و فقط قصدِ ثبتِ خرج دارد. "
@@ -250,16 +255,20 @@ async def converse_expense_only(*, user_text: str = "", audio: Optional[tuple[by
     else:
         content = f"{instruction}\n\n{user_text}"
     return await _run_extraction(user_content=content, has_audio=audio is not None,
-                                 user_id=user_id, history=history, profile=profile,
+                                 user_id=user_id, history=None, profile=profile,
                                  allowed_tags=allowed_tags or [], only_transactions=True,
                                  source="shortcut")
 
 
 async def converse_batch(*, text_parts: list[str], audio_items: list[tuple[bytes, str]],
-                         user_id: int, history=None, profile: str = "",
+                         user_id: int, profile: str = "",
                          allowed_tags=None, only_transactions: bool = False,
                          source: str = "chat") -> AgentResult:
-    """چند متن و/یا چند ویس در یک درخواست (صفِ بعد-از-ساعت‌کاری)."""
+    """چند متن و/یا چند ویس در یک درخواست (صفِ بعد-از-ساعت‌کاری).
+
+    مثل مسیرِ شرتکات، اینجا هم تاریخچه داده نمی‌شود: محتوای صف خودش کامل است و
+    گذاشتنِ خرج‌های قبلیِ همان روز جلوی مدل فقط ریسکِ ثبتِ دوباره‌شان را می‌سازد.
+    """
     intro = ("این‌ها خرج‌هایی است که کاربر بعد از پایان سهمیه‌ی قبلی پشت‌سرهم گفته. "
              "همه را با هم و کامل ثبت کن (هر کدام یک یا چند تراکنش).")
     content: list[dict] = [{"type": "text", "text": intro}]
@@ -270,7 +279,7 @@ async def converse_batch(*, text_parts: list[str], audio_items: list[tuple[bytes
         content.append(_audio_part(blob, fmt))
     has_audio = bool(audio_items)
     return await _run_extraction(user_content=content, has_audio=has_audio, user_id=user_id,
-                                 history=history, profile=profile, allowed_tags=allowed_tags or [],
+                                 history=None, profile=profile, allowed_tags=allowed_tags or [],
                                  only_transactions=only_transactions, source=source)
 
 

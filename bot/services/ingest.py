@@ -188,7 +188,7 @@ async def _process(bot, user_id: int, request_id: str, text: str,
     try:
         result = await agent.converse_expense_only(
             user_text=text, audio=audio, user_id=user_id,
-            history=memory.history(user_id), profile=memory.profile(user_id),
+            profile=memory.profile(user_id),
             allowed_tags=tags_service.allowed_tag_names(repo.get_tags()),
         )
     except LLMUnavailableError:
@@ -197,6 +197,10 @@ async def _process(bot, user_id: int, request_id: str, text: str,
 
     spoken = result.transcript or text
     memory.remember(user_id, "user", spoken or "(ویسِ میان‌بر)")
+    # طرفِ دستیار هم ثبت می‌شود تا حافظه‌ی روز، رشته‌ای از پیام‌های بی‌جوابِ کاربر نشود.
+    # آن شکل، بعداً در تلگرام مثل «فهرستی از خرج‌های ثبت‌نشده» خوانده می‌شد.
+    memory.remember(user_id, "assistant",
+                    f"ثبت شد ({len(result.created)} تراکنش)" if result.created else "چیزی ثبت نشد.")
 
     # ۴) چیزی ثبت نشد؟ ورودی نباید گم شود — متنش را در تلگرام بفرست.
     if not result.created:
