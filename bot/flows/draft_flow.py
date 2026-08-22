@@ -20,6 +20,23 @@ EXPANDED_KEY = "expanded_cards"
 TITLE_EMOJI = "📝"
 AMOUNT_EMOJI = "💰"
 
+TRANSCRIPT_MAX = 200
+
+
+def transcript_line(txn: dict[str, Any]) -> Optional[str]:
+    """«چیزی که شنیدم» برای نمایش در جزئیات.
+
+    رونویسی از اول ذخیره می‌شد ولی هیچ‌جا دیده نمی‌شد، و برای فهمیدنِ اینکه مشکلِ یک
+    ثبتِ صوتی از شنیدن است یا از استخراج، باید به دیتابیسِ سرور SSH می‌زدیم. حالا
+    همان‌جا روی کارت است.
+    """
+    text = " ".join((txn.get("transcript") or "").split())
+    if not text:
+        return None
+    if len(text) > TRANSCRIPT_MAX:
+        text = text[:TRANSCRIPT_MAX].rstrip() + "…"
+    return f"🎙 شنیدم: «{text}»"
+
 
 def render_card(txn: dict[str, Any], *, expanded: bool = False,
                 recorder_name: Optional[str] = None) -> tuple[str, InlineKeyboardMarkup]:
@@ -37,6 +54,9 @@ def render_card(txn: dict[str, Any], *, expanded: bool = False,
             lines.append("🏷 " + "، ".join(tags))
         if txn.get("note"):
             lines.append("🗒 " + txn["note"])
+        heard = transcript_line(txn)
+        if heard:
+            lines.append(heard)
 
     if recorder_name:
         lines.append(f"👤 ثبت‌کننده: {recorder_name}")
@@ -51,7 +71,10 @@ def render_card(txn: dict[str, Any], *, expanded: bool = False,
 
 def _keyboard(txn: dict[str, Any], *, expanded: bool) -> InlineKeyboardMarkup:
     tid = txn["id"]
-    has_extra = bool(txn.get("mentioned_items") or txn.get("tags") or txn.get("note"))
+    # رونویسی هم «جزئیات» حساب می‌شود، وگرنه روی ثبتِ صوتیِ کم‌جزئیات دکمه‌ای نبود که
+    # بشود دید ربات چه شنیده — دقیقاً همان‌جایی که بیشتر لازمش داریم.
+    has_extra = bool(txn.get("mentioned_items") or txn.get("tags") or txn.get("note")
+                     or txn.get("transcript"))
     rows = [[
         InlineKeyboardButton("✏️ مبلغ", callback_data=f"editamt:{tid}"),
         InlineKeyboardButton("✏️ عنوان", callback_data=f"edittitle:{tid}"),

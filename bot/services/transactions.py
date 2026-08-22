@@ -70,9 +70,15 @@ def create_from_item(user_id: int, item: dict[str, Any], *, transcript: str = ""
 
 
 def apply_update(user_id: int, txn_id: int, item: dict[str, Any]) -> Optional[int]:
-    """ویرایش یک تراکنش موجود. در صورت موفقیت id را برمی‌گرداند."""
+    """ویرایش یک تراکنش موجود. در صورت موفقیت id را برمی‌گرداند.
+
+    محدوده **خانوار** است، نه ثبت‌کننده — دفتر مشترک است و دکمه‌های کارت هم از اول روی
+    تراکنشِ هر عضوی کار می‌کردند. چکِ قبلی روی `user_id` باعث می‌شد ویرایشِ تراکنشِ
+    پارتنر با حرف‌زدن **بی‌صدا** شکست بخورد: تابع None می‌داد، کارتی رفرش نمی‌شد، و
+    کاربر فکر می‌کرد ربات حرفش را نفهمیده.
+    """
     txn = repo.get_transaction(txn_id)
-    if not txn or txn.get("user_id") != user_id:
+    if not txn or txn.get("household_id") != repo.household_id_for(user_id):
         return None
     fields: dict[str, Any] = {}
     if item.get("title"):
