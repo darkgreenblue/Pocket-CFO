@@ -56,7 +56,7 @@ async def flush_pending(bot, user_id: int) -> bool:
     try:
         result = await agent.converse_batch(
             text_parts=text_parts, audio_items=audio_items, user_id=user_id,
-            history=memory.history(user_id), profile=memory.profile(user_id),
+            profile=memory.profile(user_id),
             allowed_tags=tags_service.allowed_tag_names(repo.get_tags()),
         )
     except Exception:  # noqa: BLE001
