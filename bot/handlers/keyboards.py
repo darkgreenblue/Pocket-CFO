@@ -11,6 +11,8 @@ from telegram import (
 from bot.services.household import RELATIONS
 
 BTN_ADD = "➕ افزودن خرید"
+BTN_DEBT = "🤝 ثبت بدهی/طلب"
+BTN_GOAL = "🎯 ثبت هدف"
 BTN_REPORT = "📊 گزارش"
 BTN_HOUSEHOLD = "👨‍👩‍👧 افزودن عضو به خانوار"
 
@@ -21,11 +23,20 @@ def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton(BTN_ADD), KeyboardButton(BTN_REPORT)],
+            [KeyboardButton(BTN_DEBT), KeyboardButton(BTN_GOAL)],
             [KeyboardButton(BTN_HOUSEHOLD)],
         ],
         resize_keyboard=True,
         is_persistent=True,
     )
+
+
+def clarify_keyboard(clar_id: int) -> InlineKeyboardMarkup:
+    """«این خرج بود یا بدهی؟» — دو گزینه‌ی صریح به‌جای یک حدسِ اشتباه."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("💳 خرج بود", callback_data=f"clr:{clar_id}:txn"),
+        InlineKeyboardButton("🤝 بدهی/طلب", callback_data=f"clr:{clar_id}:debt"),
+    ]])
 
 
 def cancel_keyboard() -> InlineKeyboardMarkup:
@@ -65,3 +76,24 @@ def permission_keyboard() -> InlineKeyboardMarkup:
                               callback_data="hhperm:0")],
         [InlineKeyboardButton("انصراف", callback_data="hhcancel:0")],
     ])
+
+
+# ---------- ریزِ تراکنش‌ها ----------
+
+def report_detail_keyboard(period: str) -> InlineKeyboardMarkup:
+    """زیرِ گزارشِ خلاصه: راهِ رسیدن به فهرستِ کاملِ همان بازه."""
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🧾 ریز تراکنش‌ها", callback_data=f"rdetail:{period}")]]
+    )
+
+
+def detail_scope_keyboard(period: str, members: list[dict], me: int) -> InlineKeyboardMarkup:
+    """انتخابِ اینکه ریزِ چه کسی را می‌خواهی: کل خانوار، خودت، یا هر عضو."""
+    rows = [[InlineKeyboardButton("👨‍👩‍👧 کل خانوار", callback_data=f"rdet:{period}:all")]]
+    for member in members:
+        name = (member["display_name"] or "").strip() or "عضو خانوار"
+        if member["user_id"] == me:
+            name = f"{name} (تو)"
+        rows.append([InlineKeyboardButton(
+            f"👤 {name}", callback_data=f"rdet:{period}:{member['user_id']}")])
+    return InlineKeyboardMarkup(rows)

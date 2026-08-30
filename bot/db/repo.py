@@ -210,6 +210,38 @@ def remove_member(user_id: int) -> None:
         conn.execute("DELETE FROM household_members WHERE user_id = ?", (user_id,))
 
 
+def create_clarification(user_id: int, payload: dict[str, Any]) -> int:
+    with _conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO pending_clarifications(user_id, payload, created_at) VALUES (?, ?, ?)",
+            (user_id, json.dumps(payload, ensure_ascii=False), datetime.now().isoformat()),
+        )
+        return cur.lastrowid
+
+
+def get_clarification(clar_id: int) -> Optional[dict[str, Any]]:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM pending_clarifications WHERE id = ?", (clar_id,)
+        ).fetchone()
+    if not row:
+        return None
+    data = dict(row)
+    data["payload"] = json.loads(data["payload"] or "{}")
+    return data
+
+
+def resolve_clarification(clar_id: int, choice: str) -> bool:
+    """یک‌بارمصرف: False یعنی قبلاً جواب داده شده (دابل‌کلیک روی دکمه)."""
+    with _conn() as conn:
+        cur = conn.execute(
+            "UPDATE pending_clarifications SET resolved_at = ?, choice = ? "
+            "WHERE id = ? AND resolved_at IS NULL",
+            (datetime.now().isoformat(), choice, clar_id),
+        )
+        return cur.rowcount > 0
+
+
 def all_member_user_ids() -> list[int]:
     """همه‌ی کاربرانی که ربات می‌شناسد (برای jobهای شبانه — نه فقط ALLOWED_USER_IDS)."""
     with _conn() as conn:
@@ -693,6 +725,9 @@ def confirmed_in_range(user_id: int, start_iso: str) -> list[dict[str, Any]]:
     out = []
     for r in rows:
         d = dict(r)
+        # مثل بقیه‌ی خواننده‌ها JSON را باز می‌کنیم؛ وگرنه گزارشِ ریز، رشته‌ی خامِ JSON
+        # را به‌جای فهرستِ اقلام چاپ می‌کند.
+        d["mentioned_items"] = json.loads(d.get("mentioned_items") or "[]")
         d["tags"] = _tags_for(d["id"])
         out.append(d)
     return out
