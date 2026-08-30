@@ -15,6 +15,7 @@ from bot.config import settings
 from bot.llm.client import chat
 from bot.llm.prompts import EXTRACT_SYSTEM, PROFILE_BLOCK, QUERY_SYSTEM
 from bot.llm.tools import TOOLS_SPEC, dispatch
+from bot.services import clarify as clarify_service
 from bot.services import debts as debts_service
 from bot.services import goals as goals_service
 from bot.services import household as household_service
@@ -40,6 +41,8 @@ class AgentResult:
     debts_created: list[int] = field(default_factory=list)
     debts_updated: list[int] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # موردهایی که مدل نتوانست تراکنش/بدهی بودنشان را تعیین کند؛ از کاربر پرسیده می‌شود.
+    clarifications: list[int] = field(default_factory=list)
     # فقط در حالتِ only_transactions پر می‌شود: چیزهایی که مدل دید ولی عمداً ثبت نشدند.
     dropped_kinds: list[str] = field(default_factory=list)
 
@@ -88,7 +91,7 @@ def _loads_lenient(raw: str) -> dict[str, Any]:
                 pass
     logger.error("نتوانستم خروجی استخراج را parse کنم: %s", (raw or "")[:300])
     return {"reply": "", "transcript": "", "transactions": [], "updates": [],
-            "debts": [], "debt_updates": [], "needs_data": False}
+            "debts": [], "debt_updates": [], "clarify": [], "needs_data": False}
 
 
 async def _run_extraction(
@@ -170,6 +173,12 @@ async def _run_extraction(
             if res is not None and res not in debts_updated:
                 debts_updated.append(res)
 
+    clarifications: list[int] = []
+    for amb in data.get("clarify") or []:
+        clar_id = clarify_service.record(user_id, amb)
+        if clar_id is not None:
+            clarifications.append(clar_id)
+
     notes: list[str] = []
     goal_items = [g for g in (data.get("goals") or [])
                   if (g.get("topic") or "").strip() or g.get("limit_amount") is not None]
@@ -203,7 +212,7 @@ async def _run_extraction(
                        created=created, updated=updated,
                        goals_created=goals_created, goals_updated=goals_updated,
                        debts_created=debts_created, debts_updated=debts_updated,
-                       notes=notes)
+                       notes=notes, clarifications=clarifications)
 
 
 async def converse(*, user_text: str, user_id: int, history=None, profile: str = "",

@@ -166,6 +166,17 @@ CREATE TABLE IF NOT EXISTS debts (
     settled_at       TEXT
 );
 
+-- موردی که مدل نتوانست بین «تراکنش» و «بدهی/طلب» تصمیم بگیرد و از کاربر می‌پرسیم.
+-- در دیتابیس می‌ماند (نه در حافظه‌ی پروسه) تا یک ری‌استارت/دیپلوی سؤالِ بی‌جواب جا نگذارد.
+CREATE TABLE IF NOT EXISTS pending_clarifications (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL,
+    payload     TEXT NOT NULL,             -- JSON آیتمِ استخراج‌شده
+    created_at  TEXT NOT NULL,
+    resolved_at TEXT,
+    choice      TEXT                        -- txn | debt
+);
+
 CREATE INDEX IF NOT EXISTS idx_txn_user_status ON transactions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_txn_created ON transactions(created_at);
 CREATE INDEX IF NOT EXISTS idx_msg_user ON messages(user_id, id);

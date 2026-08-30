@@ -21,15 +21,19 @@ from bot.handlers.cards import (
 from bot.handlers.callbacks import clear_edit_messages
 from bot.handlers.keyboards import (
     BTN_ADD,
+    BTN_DEBT,
+    BTN_GOAL,
     BTN_HOUSEHOLD,
     BTN_REPORT,
     cancel_keyboard,
+    clarify_keyboard,
     relation_keyboard,
     report_period_keyboard,
 )
 from bot.llm import agent, router
 from bot.llm.client import USER_FACING_UNAVAILABLE, LLMUnavailableError
 from bot.llm.splitter import decide_parts, split_text
+from bot.services import clarify as clarify_service
 from bot.services import debts as debts_service
 from bot.services import goals as goals_service
 from bot.services import household as household_service
@@ -42,6 +46,14 @@ TOO_LONG_MSG = "این پیام خیلی طولانیه و کامل پردازش
 MULTIPART_REPLY = "همه رو ثبت کردم؛ کارت‌ها پایین 👇"
 RECORD_REPLY = "ثبت شد ✅"
 FALLBACK_REPLY = "متوجه نشدم دقیقاً چی می‌خوای 🙂 می‌تونی یه خرج بگی، گزارش بخوای، یا سؤال مالی بپرسی."
+
+# وقتی کاربر از دکمه‌ی «ثبت بدهی/طلب» یا «ثبت هدف» آمده، نیتش را می‌دانیم. این راهنما
+# یک‌بارمصرف است و به پیامِ بعدی چسبانده می‌شود تا تشخیصِ نیت شانسی نباشد.
+INTENT_HINT_KEY = "intent_hint"
+INTENT_HINTS = {
+    "debt": "(کاربر دکمه‌ی «ثبت بدهی/طلب» را زده، پس نیتش ثبتِ بدهی یا طلب است.)",
+    "goal": "(کاربر دکمه‌ی «ثبت هدف» را زده، پس نیتش تعیینِ سقف/هدفِ بودجه است.)",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +122,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     if text == BTN_REPORT:
         await update.message.reply_text("کدوم بازه؟", reply_markup=report_period_keyboard())
+        return
+    if text == BTN_DEBT:
+        context.user_data[INTENT_HINT_KEY] = "debt"
+        await update.message.reply_text(
+            "بگو به کی چقدر بدهکاری، یا از کی چقدر طلبکاری 🤝\n"
+            "مثلاً: «۵۰۰ به رضا قرض دادم» یا «۲ میلیون از بابا گرفتم».\n"
+            "یادت باشه بدهی/طلب به اسمِ یک شخص ثبت می‌شه؛ قسط و پرداختِ سرویس‌ها خرج حساب می‌شن."
+        )
+        return
+    if text == BTN_GOAL:
+        context.user_data[INTENT_HINT_KEY] = "goal"
+        await update.message.reply_text(
+            "بگو برای چه دسته‌ای چه سقفی می‌خوای 🎯\n"
+            "مثلاً: «این ماه بیشتر از ۳ میلیون رستوران نرم»."
+        )
         return
     if text == BTN_HOUSEHOLD:
         await update.message.reply_text(
@@ -187,8 +214,9 @@ async def _emit(update: Update, context: ContextTypes.DEFAULT_TYPE, *, results: 
     user_id = update.effective_user.id
 
     created, updated, gcreated, gupdated = [], [], [], []
-    dcreated, dupdated, notes = [], [], []
+    dcreated, dupdated, notes, ambiguous = [], [], [], []
     for r in results:
+        ambiguous += r.clarifications
         created += r.created
         updated += r.updated
         gcreated += r.goals_created
@@ -230,6 +258,13 @@ async def _emit(update: Update, context: ContextTypes.DEFAULT_TYPE, *, results: 
         if did not in dshown:
             await refresh_debt_card(context.bot, chat_id, did)
 
+    # موردهای مبهم ثبت نشده‌اند؛ به‌جای حدس، همین‌جا از کاربر می‌پرسیم.
+    for clar_id in ambiguous:
+        question = clarify_service.question(clar_id)
+        if question:
+            await update.message.reply_text(question,
+                                            reply_markup=clarify_keyboard(clar_id))
+
     gshown: set[int] = set()
     for gid in gcreated:
         await send_goal_card(context.bot, chat_id, gid)
@@ -247,6 +282,11 @@ async def _process(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
                    user_text: str | None = None, audio_file_id: str | None = None,
                    voice_duration: int = 0, context_note: str = "") -> None:
     user_id = update.effective_user.id
+
+    # راهنمای نیت یک‌بارمصرف است: همین پیام از آن استفاده می‌کند و بعد پاک می‌شود.
+    hint = context.user_data.pop(INTENT_HINT_KEY, None)
+    if hint and INTENT_HINTS.get(hint):
+        context_note = f"{context_note} {INTENT_HINTS[hint]}".strip()
 
     # اگر صفی از قبل مانده و امروز هنوز سهمیه داریم، اول صف را یکپارچه ثبت کن.
     if repo.has_pending(user_id) and memory.usage_today(user_id) < settings.daily_llm_limit:

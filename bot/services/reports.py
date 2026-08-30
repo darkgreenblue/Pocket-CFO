@@ -123,3 +123,104 @@ def build_report(user_id: int, period: str = "month") -> str:
         lines += debt_lines
 
     return "\n".join(lines)
+
+
+# ─────────────────────────── ریزِ تراکنش‌ها ───────────────────────────
+# گزارشِ بالا خلاصه است؛ این یکی تک‌تکِ کارت‌ها را با همه‌ی جزئیاتشان می‌دهد.
+
+SCOPE_ALL = "all"
+TELEGRAM_SAFE_CHARS = 3500      # سقفِ پیامِ تلگرام ۴۰۹۶ است؛ حاشیه نگه می‌داریم
+
+
+def _jalali_date(iso: str) -> str:
+    """تاریخِ ISO را به شمسیِ خوانا برمی‌گرداند (پروژه تقویمِ شمسی دارد)."""
+    try:
+        import jdatetime
+        g = datetime.fromisoformat(iso).date()
+        jd = jdatetime.date.fromgregorian(date=g)
+        return f"{to_persian_digits(jd.year)}/{to_persian_digits(jd.month)}/" \
+               f"{to_persian_digits(jd.day)}"
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def scope_label(user_id: int, scope: str) -> str:
+    if scope == SCOPE_ALL:
+        return "کلِ خانوار"
+    names = household_service.name_map(user_id)
+    try:
+        return names.get(int(scope), household_service.DEFAULT_NAME)
+    except (TypeError, ValueError):
+        return household_service.DEFAULT_NAME
+
+
+def _txn_block(txn: dict, names: dict[int, str] | None) -> list[str]:
+    """یک تراکنش با همه‌ی چیزی که درباره‌اش داریم."""
+    lines = [
+        f"📝 {(txn.get('title') or '').strip() or '— (نامشخص)'}",
+        f"💰 {format_amount(txn.get('amount'), txn.get('currency_display', 'toman'))}",
+    ]
+    tags = txn.get("tags") or []
+    if tags:
+        lines.append("🏷 " + "، ".join(tags))
+    items = txn.get("mentioned_items") or []
+    if items:
+        lines.append("🧺 " + "، ".join(items))
+    if txn.get("note"):
+        lines.append("🗒 " + str(txn["note"]).strip())
+    if (txn.get("transcript") or "").strip():
+        heard = " ".join(str(txn["transcript"]).split())
+        lines.append(f"🎙 {heard[:150]}{'…' if len(heard) > 150 else ''}")
+
+    footer = []
+    if names:
+        footer.append(names.get(txn.get("user_id"), household_service.DEFAULT_NAME))
+    date = _jalali_date(txn.get("created_at") or "")
+    if date:
+        footer.append(date)
+    if txn.get("status") == "draft":
+        footer.append("ناقص")
+    if footer:
+        lines.append("👤 " + " · ".join(footer))
+    return lines
+
+
+def build_detail(user_id: int, period: str = "month", scope: str = SCOPE_ALL) -> str:
+    """فهرستِ کاملِ تراکنش‌های بازه — نه خلاصه، تک‌تکِ کارت‌ها با جزئیات.
+
+    scope: «all» برای کلِ خانوار، یا آی‌دی عددیِ یک عضو (به‌صورت رشته).
+    """
+    txns = repo.confirmed_in_range(user_id, _start_iso(period))
+    if scope != SCOPE_ALL:
+        try:
+            member_id = int(scope)
+        except (TypeError, ValueError):
+            member_id = user_id
+        txns = [t for t in txns if t.get("user_id") == member_id]
+
+    label = _LABELS.get(period, "ماه گذشته")
+    who = scope_label(user_id, scope)
+    if not txns:
+        return f"🧾 ریز تراکنش‌های {label} — {who}\nچیزی ثبت نشده."
+
+    names = household_service.name_map(user_id) if household_service.is_shared(user_id) else None
+    total_rial = sum(to_rial(t.get("amount"), t.get("currency_display", "toman")) for t in txns)
+    foreign: dict[str, float] = {}
+    for t in txns:
+        currency = (t.get("currency_display") or "toman").lower()
+        if currency not in ("toman", "rial") and t.get("amount") is not None:
+            foreign[currency] = foreign.get(currency, 0) + t["amount"]
+
+    head = [f"🧾 ریز تراکنش‌های {label} — {who}",
+            f"تعداد: {to_persian_digits(len(txns))} · "
+            f"جمع: {group_digits(total_rial // 10)} تومان"]
+    if foreign:
+        head.append("💵 " + "، ".join(format_amount(v, c) for c, v in foreign.items()))
+
+    blocks = [ "\n".join(_txn_block(t, names)) for t in
+               sorted(txns, key=lambda t: t.get("created_at") or "", reverse=True) ]
+    return "\n".join(head) + "\n" + "─" * 12 + "\n" + ("\n" + "─" * 12 + "\n").join(blocks)
+
+
+def detail_filename(period: str, scope: str) -> str:
+    return f"transactions-{period}-{scope}.txt"

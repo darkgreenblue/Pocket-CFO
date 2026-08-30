@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from io import BytesIO
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -9,9 +10,16 @@ from telegram.ext import ContextTypes
 from bot.db import repo
 from bot.flows.draft_flow import AWAITING_KEY, EXPANDED_KEY
 from bot.handlers import cards
-from bot.handlers.keyboards import cancel_keyboard, permission_keyboard
+from bot.handlers.keyboards import (
+    cancel_keyboard,
+    detail_scope_keyboard,
+    permission_keyboard,
+    report_detail_keyboard,
+)
+from bot.services import clarify as clarify_service
 from bot.services import debts as debts_service
 from bot.services import household as household_service
+from bot.services import reports as reports_service
 from bot.services.reports import build_report
 
 logger = logging.getLogger(__name__)
@@ -61,7 +69,21 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if action == "report":
         await query.answer()
-        await query.edit_message_text(build_report(user.id, period=arg))
+        await query.edit_message_text(build_report(user.id, period=arg),
+                                      reply_markup=report_detail_keyboard(arg))
+        return
+
+    if action == "rdetail":
+        await _on_detail_scope(query, user.id, arg)
+        return
+
+    if action == "rdet":
+        period, _, scope = arg.partition(":")
+        await _send_detail(query, context, user.id, period, scope or reports_service.SCOPE_ALL)
+        return
+
+    if action == "clr":
+        await _on_clarify(query, context, arg, user.id)
         return
 
     if action == "editcancel":
@@ -232,3 +254,67 @@ async def _on_household(query, context: ContextTypes.DEFAULT_TYPE, action: str,
         return
 
     await query.answer()
+
+
+# ---------- ریزِ تراکنش‌ها ----------
+
+async def _on_detail_scope(query, user_id: int, period: str) -> None:
+    """در خانوارِ چندنفره می‌پرسیم ریزِ چه کسی؛ کاربرِ تنها مستقیم گزارشش را می‌گیرد."""
+    await query.answer()
+    if not household_service.is_shared(user_id):
+        await _deliver_detail(query, user_id, period, reports_service.SCOPE_ALL)
+        return
+    members = household_service.members(user_id)
+    await query.message.reply_text(
+        "ریزِ تراکنش‌های چه کسی را می‌خواهی؟",
+        reply_markup=detail_scope_keyboard(period, members, user_id),
+    )
+
+
+async def _send_detail(query, context, user_id: int, period: str, scope: str) -> None:
+    await query.answer()
+    await _deliver_detail(query, user_id, period, scope)
+
+
+async def _deliver_detail(query, user_id: int, period: str, scope: str) -> None:
+    """پیامِ معمولی، و اگر طولانی بود همان متن به‌صورت فایل .txt.
+
+    گزارشِ ریز عمداً کامل است، پس گاهی از سقفِ پیامِ تلگرام رد می‌شود؛ در آن حالت
+    نباید بریده شود — کلِ متن به‌صورت فایل می‌رود.
+    """
+    text = reports_service.build_detail(user_id, period=period, scope=scope)
+    if len(text) <= reports_service.TELEGRAM_SAFE_CHARS:
+        await query.message.reply_text(text)
+        return
+    document = BytesIO(text.encode("utf-8"))
+    document.name = reports_service.detail_filename(period, scope)
+    await query.message.reply_document(
+        document=document,
+        filename=document.name,
+        caption=f"🧾 ریزِ تراکنش‌ها ({reports_service.scope_label(user_id, scope)}) — "
+                "چون طولانی بود، به‌صورت فایل فرستادمش.",
+    )
+
+
+# ---------- ابهامِ تراکنش/بدهی ----------
+
+async def _on_clarify(query, context, arg: str, user_id: int) -> None:
+    raw_id, _, choice = arg.partition(":")
+    try:
+        clar_id = int(raw_id)
+    except ValueError:
+        await query.answer()
+        return
+
+    kind, obj_id = clarify_service.resolve(user_id, clar_id, choice)
+    if kind is None:
+        await query.answer(clarify_service.ALREADY_ANSWERED, show_alert=True)
+        return
+
+    await query.answer("ثبت شد ✅")
+    if kind == clarify_service.CHOICE_DEBT:
+        await query.edit_message_text("🤝 به‌عنوان بدهی/طلب ثبت شد.")
+        await cards.send_debt_card(context.bot, query.message.chat_id, obj_id)
+    else:
+        await query.edit_message_text("💳 به‌عنوان خرج ثبت شد.")
+        await cards.send_card(context.bot, query.message.chat_id, obj_id)
