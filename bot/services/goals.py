@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 from bot.db import repo
 from bot.services import household as household_service
+from bot.services import memory
 from bot.services import tags as tags_service
 from bot.utils import jalali
 from bot.utils.money import group_digits, to_rial
@@ -163,6 +164,8 @@ async def evaluate_and_alert(bot, user_id: int) -> None:
             try:
                 await bot.send_message(chat_id=member_id, text=text)
                 delivered = True
+                # تا «چرا؟ کجاها خرج کردم؟»ِ بعدی بداند به کدام هشدار جواب می‌دهد.
+                memory.remember_bot(member_id, text)
             except Exception:  # noqa: BLE001
                 logger.warning("ارسال آلارم هدف %s به %s ناموفق بود", goal["id"], member_id)
         if delivered:

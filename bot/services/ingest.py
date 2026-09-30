@@ -234,6 +234,8 @@ async def _notify(bot, user_id: int, text: str) -> None:
         await bot.send_message(chat_id=user_id, text=text)
     except Exception:  # noqa: BLE001
         logger.warning("ارسالِ پیامِ اطلاع‌رسانی به %s ناموفق بود", user_id)
+        return
+    memory.remember_bot(user_id, text)
 
 
 # ---------- تحویلِ کارت‌های جامانده ----------

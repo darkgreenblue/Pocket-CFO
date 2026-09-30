@@ -11,6 +11,7 @@ from typing import Any
 
 from bot.db import repo
 from bot.services import debts as debts_service
+from bot.services import goals as goals_service
 from bot.services import household as household_service
 from bot.services import tags as tags_service
 from bot.utils import jalali
@@ -76,6 +77,16 @@ TOOLS_SPEC = [
                                         "description": "تسویه‌شده‌ها هم بیایند؟ پیش‌فرض false."},
                 },
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_goals",
+            "description": ("اهداف/بودجه‌های فعالِ خانوار در ماهِ شمسیِ جاری، با مبلغِ خرج‌شده، "
+                            "درصد و مانده — برای «چقدر از بودجه‌ی رستوران مونده؟»، «از سقفم رد "
+                            "شدم؟»، «اهدافم چطوره؟». اعداد را خودِ سیستم حساب کرده است."),
+            "parameters": {"type": "object", "properties": {}},
         },
     },
     {
@@ -254,6 +265,28 @@ def dispatch(name: str, args: dict[str, Any], *, user_id: int) -> dict[str, Any]
                             for c, v in (open_totals[debts_service.CREDIT]).items()},
                 },
                 "note": "remaining یعنی مانده‌ی تسویه‌نشده. ارزها جدا هستند.",
+            }
+
+        if name == "get_goals":
+            jyear, jmonth = jalali.current_ym()
+            out_goals = []
+            for goal in repo.active_goals_for_month(user_id, jyear, jmonth):
+                limit = goal.get("limit_amount") or 0
+                spent = goals_service.spent_toman(user_id, goal)
+                out_goals.append({
+                    "id": goal["id"],
+                    "topic": goal.get("topic"),
+                    "limit_toman": limit,
+                    "spent_toman": spent,
+                    "remaining_toman": max(limit - spent, 0),
+                    "percent_used": int(spent * 100 / limit) if limit else None,
+                    "over_budget": bool(limit) and spent > limit,
+                })
+            return {
+                "month": f"{jalali.month_name(jmonth)} {jyear}",
+                "month_ends": jalali.month_end_str(jyear, jmonth),
+                "goals": out_goals,
+                "note": "خرجِ همه‌ی اعضای خانوار حساب شده؛ فقط تومان/ریال.",
             }
 
         if name == "compute_total_in_toman":

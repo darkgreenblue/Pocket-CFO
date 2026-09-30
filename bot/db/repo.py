@@ -469,6 +469,26 @@ def pending_for_reminder(user_id: int) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def household_drafts(user_id: int, limit: int = 10) -> list[dict[str, Any]]:
+    """تراکنش‌های ناقصِ خانوار (هر تاریخی) — جدیدترین اول.
+
+    برخلافِ pending_for_reminder، به «یادآوری شده یا نه» کاری ندارد: تراکنشی که دیشب
+    درباره‌اش پرسیدیم دقیقاً همانی است که کاربر امروز می‌خواهد کاملش کند.
+    """
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM transactions WHERE household_id = ? AND status = 'draft' "
+            "ORDER BY id DESC LIMIT ?",
+            (_ensure_household(conn, user_id), limit),
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["mentioned_items"] = json.loads(d.get("mentioned_items") or "[]")
+        out.append(d)
+    return out
+
+
 def mark_reminded(txn_id: int) -> None:
     with _conn() as conn:
         conn.execute("UPDATE transactions SET reminded = 1 WHERE id = ?", (txn_id,))

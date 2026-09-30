@@ -94,6 +94,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await clear_edit_messages(context.bot, awaiting)
         return
 
+    if action == "keep":
+        await query.answer()
+        await query.edit_message_text("👍 باشه، دست نزدم.")
+        return
+
     if action.startswith("hh"):
         await _on_household(query, context, action, arg, user)
         return
@@ -130,6 +135,15 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         repo.delete_transaction(txn_id)
         await query.answer("حذف شد.")
         await query.edit_message_text("🗑 حذف شد.")
+        # اگر حذف از پیامِ تأیید آمده (نه از خودِ کارت)، کارتِ اصلی هم باید بگوید حذف شده؛
+        # وگرنه تراکنشی که دیگر نیست همچنان با دکمه‌های فعال در گفتگو می‌ماند.
+        card_chat, card_msg = txn.get("card_chat_id"), txn.get("card_message_id")
+        if card_msg and (card_chat, card_msg) != (query.message.chat_id, query.message.message_id):
+            try:
+                await context.bot.edit_message_text("🗑 حذف شد.", chat_id=card_chat,
+                                                    message_id=card_msg)
+            except Exception:  # noqa: BLE001 — کارتِ خیلی قدیمی یا پاک‌شده
+                pass
     else:
         await query.answer()
 

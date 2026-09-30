@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Union
 
 from bot.config import settings
+from bot.db import repo
 from bot.llm.client import chat
 from bot.llm.prompts import EXTRACT_SYSTEM, PROFILE_BLOCK, QUERY_SYSTEM
 from bot.llm.tools import TOOLS_SPEC, dispatch
@@ -43,6 +44,9 @@ class AgentResult:
     notes: list[str] = field(default_factory=list)
     # موردهایی که مدل نتوانست تراکنش/بدهی بودنشان را تعیین کند؛ از کاربر پرسیده می‌شود.
     clarifications: list[int] = field(default_factory=list)
+    # تراکنش‌هایی که کاربر با حرف‌زدن خواسته حذف شوند. **حذف نشده‌اند** — حذف با حدسِ مدل
+    # برگشت‌ناپذیر است، پس فقط بعد از تأییدِ کاربر با دکمه انجام می‌شود.
+    deletion_requests: list[int] = field(default_factory=list)
     # فقط در حالتِ only_transactions پر می‌شود: چیزهایی که مدل دید ولی عمداً ثبت نشدند.
     dropped_kinds: list[str] = field(default_factory=list)
 
@@ -91,7 +95,8 @@ def _loads_lenient(raw: str) -> dict[str, Any]:
                 pass
     logger.error("نتوانستم خروجی استخراج را parse کنم: %s", (raw or "")[:300])
     return {"reply": "", "transcript": "", "transactions": [], "updates": [],
-            "debts": [], "debt_updates": [], "clarify": [], "needs_data": False}
+            "debts": [], "debt_updates": [], "clarify": [], "deletes": [],
+            "needs_data": False}
 
 
 async def _run_extraction(
@@ -104,6 +109,7 @@ async def _run_extraction(
     allowed_tags: list[str],
     only_transactions: bool = False,
     source: str = "chat",
+    ledger: str = "",
 ) -> AgentResult:
     system = EXTRACT_SYSTEM.format(
         tags="، ".join(allowed_tags), default_currency=settings.default_currency,
@@ -111,6 +117,8 @@ async def _run_extraction(
     )
     if profile.strip():
         system += PROFILE_BLOCK.format(profile=profile.strip())
+    if ledger.strip():
+        system += "\n\n" + ledger.strip()
 
     messages = [{"role": "system", "content": system}]
     messages += _history_messages(history)
@@ -173,6 +181,18 @@ async def _run_extraction(
             if res is not None and res not in debts_updated:
                 debts_updated.append(res)
 
+    deletion_requests: list[int] = []
+    my_household = repo.household_id_for(user_id)
+    for item in data.get("deletes") or []:
+        try:
+            txn_id = int(item.get("transaction_id") if isinstance(item, dict) else item)
+        except (TypeError, ValueError):
+            continue
+        txn = repo.get_transaction(txn_id)
+        # فقط تراکنشِ واقعیِ همین خانوار؛ شماره‌ی ساختگی یا مالِ کسِ دیگر بی‌صدا رد می‌شود.
+        if txn and txn.get("household_id") == my_household and txn_id not in deletion_requests:
+            deletion_requests.append(txn_id)
+
     clarifications: list[int] = []
     for amb in data.get("clarify") or []:
         clar_id = clarify_service.record(user_id, amb)
@@ -212,26 +232,30 @@ async def _run_extraction(
                        created=created, updated=updated,
                        goals_created=goals_created, goals_updated=goals_updated,
                        debts_created=debts_created, debts_updated=debts_updated,
-                       notes=notes, clarifications=clarifications)
+                       notes=notes, clarifications=clarifications,
+                       deletion_requests=deletion_requests)
 
 
 async def converse(*, user_text: str, user_id: int, history=None, profile: str = "",
-                   allowed_tags=None, context_note: str = "") -> AgentResult:
+                   allowed_tags=None, context_note: str = "", ledger: str = "") -> AgentResult:
     """ورودی متنی."""
     content = f"{context_note}\n\n{user_text}" if context_note else user_text
     return await _run_extraction(user_content=content, has_audio=False, user_id=user_id,
-                                 history=history, profile=profile, allowed_tags=allowed_tags or [])
+                                 history=history, profile=profile, allowed_tags=allowed_tags or [],
+                                 ledger=ledger)
 
 
 async def converse_audio(*, audio_ogg: bytes, user_id: int, history=None, profile: str = "",
-                         allowed_tags=None, context_note: str = "") -> AgentResult:
+                         allowed_tags=None, context_note: str = "",
+                         ledger: str = "") -> AgentResult:
     """ورودی یک ویس — رونویسی و استخراج در یک کال."""
     instruction = "این پیام صوتی فارسی را رونویسی کن و طبق قوانین، خرج‌ها را استخراج کن."
     if context_note:
         instruction = f"{context_note}\n{instruction}"
     content = [{"type": "text", "text": instruction}, _audio_part(audio_ogg)]
     return await _run_extraction(user_content=content, has_audio=True, user_id=user_id,
-                                 history=history, profile=profile, allowed_tags=allowed_tags or [])
+                                 history=history, profile=profile, allowed_tags=allowed_tags or [],
+                                 ledger=ledger)
 
 
 async def converse_expense_only(*, user_text: str = "", audio: Optional[tuple[bytes, str]] = None,

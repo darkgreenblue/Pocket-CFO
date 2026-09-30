@@ -42,10 +42,31 @@ def _apply_tags(txn_id: int, suggested: list[str], user_id: int) -> None:
         repo.add_tag_suggestion(user_id, txn_id, nm)
 
 
+TITLE_FROM_ITEMS_MAX = 3
+
+
+def title_from_items(items: list) -> Optional[str]:
+    """اگر مدل عنوان نداد ولی اقلام را گفت، عنوان همان اقلام است.
+
+    نمونه‌ی واقعی: «۸۶ تومن آب معدنی و آب گازدار از سوپرمارکت» → عنوان خالی ماند ولی
+    اقلام ["آب معدنی", "آب گازدار"] ثبت شدند؛ تراکنش ناقص شد و شبِ بعد یادآوری آمد که
+    «بدون عنوان». این ساختنِ عنوانِ جعلی نیست — کلمه‌های خودِ کاربر است.
+    """
+    names = [str(i).strip() for i in items if str(i).strip()]
+    if not names:
+        return None
+    title = "، ".join(names[:TITLE_FROM_ITEMS_MAX])
+    if len(names) > TITLE_FROM_ITEMS_MAX:
+        title += "، …"
+    return title
+
+
 def create_from_item(user_id: int, item: dict[str, Any], *, transcript: str = "",
                      source: str = "chat") -> int:
     """یک تراکنش از آیتم استخراج‌شده‌ی LLM می‌سازد (کامل → confirmed، ناقص → draft)."""
     title = (item.get("title") or "").strip() or None
+    if title is None:
+        title = title_from_items(item.get("mentioned_items") or [])
     if title is None and item.get("title_unimportant"):
         title = "بدون عنوان"
     amount = coerce_amount(item.get("amount"))
