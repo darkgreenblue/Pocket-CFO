@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Optional
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from bot.config import settings
@@ -44,21 +46,55 @@ def _known_users() -> list[int]:
     return list(users)
 
 
+MAX_BUTTON_ROWS = 10   # بیشتر از این، پیام شلوغ می‌شود؛ بقیه با ریپلای کامل می‌شوند
+
+
+def reminder_keyboard(pending: list[dict]) -> Optional[InlineKeyboardMarkup]:
+    """برای هر تراکنشِ ناقص، دکمه‌ی همان فیلدی که کم دارد — تا تکمیل یک ضربه باشد، نه حدس.
+
+    از همان callbackهای کارت استفاده می‌کند، پس ویرایش دقیقاً مثل کارت رفتار می‌کند
+    (پرسش با انصراف، تأییدِ صریح، پاک‌شدنِ پیام‌های موقت).
+    """
+    rows = []
+    for txn in pending[:MAX_BUTTON_ROWS]:
+        row = []
+        if not (txn.get("title") or "").strip():
+            row.append(InlineKeyboardButton(f"✏️ عنوانِ #{txn['id']}",
+                                            callback_data=f"edittitle:{txn['id']}"))
+        if txn.get("amount") is None:
+            row.append(InlineKeyboardButton(f"✏️ مبلغِ #{txn['id']}",
+                                            callback_data=f"editamt:{txn['id']}"))
+        if row:
+            rows.append(row)
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
+def reminder_text(pending: list[dict]) -> str:
+    lines = ["🌙 سلام! چند تراکنش هست که می‌تونیم امشب کاملش کنیم:", ""]
+    lines += [_describe(t) for t in pending]
+    lines.append("")
+    lines.append("با دکمه‌ها کاملشون کن، یا همین‌جا بگو کدوم چی بوده "
+                 "(مثلاً «اون ۸۶ تومنی آب معدنی بود»). 🙂")
+    return "\n".join(lines)
+
+
 async def nightly_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
     for user_id in _known_users():
         pending = repo.pending_for_reminder(user_id)
         if not pending:
             continue
-        lines = ["🌙 سلام! چند تراکنش هست که می‌تونیم امشب کاملش کنیم:", ""]
-        lines += [_describe(t) for t in pending]
-        lines.append("")
-        lines.append("اگه دوست داری، روی هر کدوم جواب بده تا توضیحات بیشترش رو با متن یا ویس کامل کنیم. 🙂")
+        text = reminder_text(pending)
         try:
-            await context.bot.send_message(chat_id=user_id, text="\n".join(lines))
-            for txn in pending:
-                repo.mark_reminded(txn["id"])
+            await context.bot.send_message(chat_id=user_id, text=text,
+                                           reply_markup=reminder_keyboard(pending))
         except Exception as exc:  # noqa: BLE001
             logger.warning("ارسال یادآوری به %s ناموفق بود: %s", user_id, exc)
+            continue
+        # یادآوری باید در حافظه باشد: کاربر معمولاً بلافاصله جوابش را می‌دهد، و بدونِ این
+        # مدل نمی‌داند «این ۸۶ هزار» یعنی چه — دقیقاً باگی که گزارش شد.
+        memory.remember_bot(user_id, text)
+        for txn in pending:
+            repo.mark_reminded(txn["id"])
 
 
 async def nightly_profile_update(context: ContextTypes.DEFAULT_TYPE) -> None:

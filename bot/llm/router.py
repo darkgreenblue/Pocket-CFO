@@ -66,9 +66,15 @@ def _history_messages(history: Optional[list[dict]]) -> list[dict]:
 
 
 async def route(*, text: str, history: Optional[list[dict]] = None,
-                reply_note: str = "") -> Decision:
-    """نیتِ یک پیامِ متنی (یا رونویسیِ ویس) را تعیین می‌کند."""
+                reply_note: str = "", ledger: str = "") -> Decision:
+    """نیتِ یک پیامِ متنی (یا رونویسیِ ویس) را تعیین می‌کند.
+
+    `ledger` تصویرِ فعلیِ دفتر است؛ بدونِ آن روتر نمی‌فهمید «اون ۸۶ تومنی آب معدنی بود»
+    تکمیلِ یک تراکنشِ موجود است و با یک جوابِ گفتگوییِ بی‌اثر ردش می‌کرد.
+    """
     system = ROUTER_SYSTEM.format(today=jalali.today_str(), capabilities=CAPABILITIES)
+    if ledger.strip():
+        system += "\n\n" + ledger.strip()
     user_content = f"{reply_note}\n\n{text}" if reply_note else text
     messages = [{"role": "system", "content": system}]
     messages += _history_messages(history)

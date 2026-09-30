@@ -35,6 +35,17 @@ def remember(user_id: int, role: str, content: str, weight: int = 1) -> None:
         repo.add_message(user_id, role, content.strip(), weight=weight)
 
 
+def remember_bot(user_id: int, content: str) -> None:
+    """پیامی که ربات **خودش** (بدون درخواستِ کاربر) فرستاده را در حافظه می‌گذارد.
+
+    یادآوریِ شبانه، هشدارِ بودجه، سؤالِ «خرج بود یا بدهی؟» و… قبلاً فرستاده می‌شدند ولی
+    هیچ‌جا ثبت نمی‌شدند؛ پس وقتی کاربر بلافاصله جوابشان را می‌داد، مدل نمی‌دانست دارد به
+    چه چیزی جواب می‌دهد — از دیدِ او آخرین حرفِ ربات چیزِ دیگری بود. سهمیه‌ی روزانه فقط
+    پیام‌های کاربر را می‌شمارد، پس این‌ها هزینه‌ای ندارند.
+    """
+    remember(user_id, "assistant", content)
+
+
 def profile(user_id: int) -> str:
     return repo.get_profile(user_id)
 

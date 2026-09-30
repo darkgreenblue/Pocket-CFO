@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -27,6 +28,7 @@ from bot.handlers.keyboards import (
     BTN_REPORT,
     cancel_keyboard,
     clarify_keyboard,
+    delete_confirm_keyboard,
     relation_keyboard,
     report_period_keyboard,
 )
@@ -37,10 +39,10 @@ from bot.services import clarify as clarify_service
 from bot.services import debts as debts_service
 from bot.services import goals as goals_service
 from bot.services import household as household_service
-from bot.services import memory, pending
+from bot.services import ledger, memory, pending
 from bot.services import tags as tags_service
 from bot.utils import ratelimit
-from bot.utils.money import format_amount, parse_amount
+from bot.utils.money import format_amount, normalize_digits, parse_amount
 
 TOO_LONG_MSG = "این پیام خیلی طولانیه و کامل پردازش نمی‌شه 🙏 لطفاً کوتاه‌تر و در چند پیام بفرست."
 MULTIPART_REPLY = "همه رو ثبت کردم؛ کارت‌ها پایین 👇"
@@ -79,26 +81,62 @@ def _rate_limited(user_id: int) -> bool:
     return not ratelimit.allow(user_id, settings.rate_limit_max, settings.rate_limit_window)
 
 
-def _reply_context(update: Update) -> str:
-    """اگر کاربر ریپلای زده، متنِ پیامِ ریپلای‌شده (و در صورت کارت‌بودن، شناسه) را می‌دهد."""
+_TXN_REF = re.compile(r"#(\d{1,9})")
+
+
+def referenced_transactions(quoted: str, user_id: int) -> list[dict]:
+    """تراکنش‌هایی که یک پیامِ ربات با «#شماره» از آن‌ها نام برده (مثلِ یادآوریِ شبانه).
+
+    فقط تراکنش‌های واقعیِ خانوارِ همین کاربر برمی‌گردند؛ عددِ تصادفیِ بعد از # چیزی را
+    به کسِ دیگری وصل نمی‌کند.
+    """
+    household = repo.household_id_for(user_id)
+    found: list[dict] = []
+    for raw in dict.fromkeys(_TXN_REF.findall(normalize_digits(quoted or ""))):
+        txn = repo.get_transaction(int(raw))
+        if txn and txn.get("household_id") == household:
+            found.append(txn)
+    return found
+
+
+def _reply_context(update: Update) -> tuple[str, bool]:
+    """یادداشتِ ریپلای برای مدل، و اینکه آیا ریپلای به یک رکوردِ مشخص اشاره می‌کند.
+
+    قبلاً فقط ریپلای روی **کارت** به تراکنش وصل می‌شد. ریپلای روی یادآوریِ شبانه — که
+    خودش «#474» را نام برده — فقط متنِ خام می‌رساند، و مدل نمی‌فهمید کدام تراکنش است.
+    """
     r = update.message.reply_to_message
     if not r:
-        return ""
+        return "", False
     quoted = (r.text or r.caption or "").strip()
     parts = []
+    refers_to_record = False
     if quoted:
         parts.append(f"کاربر به این پیامِ قبلی ریپلای کرد: «{quoted}»")
     txn = repo.find_by_card_message(update.effective_chat.id, r.message_id)
     if txn:
+        refers_to_record = True
         parts.append(f"(این کارتِ تراکنش #{txn['id']} است؛ برای اصلاحش از updates استفاده کن.)")
+    else:
+        mentioned = referenced_transactions(quoted, update.effective_user.id)
+        if mentioned:
+            refers_to_record = True
+            ids = "، ".join(f"#{t['id']}" for t in mentioned)
+            parts.append(
+                f"(این پیام به تراکنش‌های {ids} اشاره می‌کند. حرفِ کاربر درباره‌ی همین‌هاست: "
+                "برای تکمیل/اصلاح از updates با همین transaction_idها استفاده کن و تراکنشِ "
+                "تازه نساز. اگر معلوم نیست کدام، در reply بپرس.)"
+            )
     goal = repo.find_goal_by_card_message(update.effective_chat.id, r.message_id)
     if goal:
+        refers_to_record = True
         parts.append(f"(این کارتِ هدف #{goal['id']} است؛ برای اصلاحش از goal_updates استفاده کن.)")
     debt = repo.find_debt_by_card_message(update.effective_chat.id, r.message_id)
     if debt:
+        refers_to_record = True
         parts.append(f"(این کارتِ بدهی/طلب #{debt['id']} است؛ برای اصلاح یا تسویه‌اش از "
                      "debt_updates استفاده کن.)")
-    return " ".join(parts)
+    return " ".join(parts), refers_to_record
 
 
 def _threshold_notice(before: int, after: int) -> str | None:
@@ -153,7 +191,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("یه کم آروم‌تر 🙂 چند لحظه دیگه دوباره بفرست.")
         return
 
-    await _process(update, context, user_text=text, context_note=_reply_context(update))
+    note, refers_to_record = _reply_context(update)
+    await _process(update, context, user_text=text, context_note=note,
+                   force_record=refers_to_record)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -174,8 +214,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if _rate_limited(update.effective_user.id):
         await update.message.reply_text("یه کم آروم‌تر 🙂 چند لحظه دیگه دوباره بفرست.")
         return
+    note, refers_to_record = _reply_context(update)
     await _process(update, context, audio_file_id=voice.file_id,
-                   voice_duration=voice.duration or 0, context_note=_reply_context(update))
+                   voice_duration=voice.duration or 0, context_note=note,
+                   force_record=refers_to_record)
 
 
 async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -188,35 +230,103 @@ async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # ---------- پردازش ----------
 
-async def _text_pipeline(text: str, context_note: str, user_id: int) -> tuple[list, int]:
+async def _text_pipeline(text: str, context_note: str, user_id: int,
+                         book: str = "") -> tuple[list, int]:
     """متن را (در صورت لزوم) افراز و هر پارت را استخراج می‌کند. (results, weight)"""
     tags = tags_service.allowed_tag_names(repo.get_tags())
     hist, prof = memory.history(user_id), memory.profile(user_id)
     n = decide_parts(text)
     if n <= 1:
         r = await agent.converse(user_text=text, user_id=user_id, history=hist,
-                                 profile=prof, allowed_tags=tags, context_note=context_note)
+                                 profile=prof, allowed_tags=tags, context_note=context_note,
+                                 ledger=book)
         return [r], 1
     parts = await split_text(text, n)
     results = []
     for i, p in enumerate(parts):
         r = await agent.converse(user_text=p, user_id=user_id, history=hist, profile=prof,
-                                 allowed_tags=tags, context_note=context_note if i == 0 else "")
+                                 allowed_tags=tags, context_note=context_note if i == 0 else "",
+                                 ledger=book)
         results.append(r)
     return results, len(parts)
 
 
+# ادعای انجامِ کار: «ثبت شد»، «اصلاحش می‌کنم»، «حذف کردم». عمداً «ثبت شده» (توصیفِ وضعیت،
+# مثل «امروز دو خرج ثبت شده») را نمی‌گیرد — آن قول نیست، گزارش است.
+_ACTION_CLAIM = re.compile(
+    r"(ثبت\s*(شد(?!ه)|کردم|ش\s*کردم|ش\s*می)|اصلاح\s*(شد(?!ه)|کردم|ش\s*می|ش\s*کردم)|"
+    r"درست\s*(ش\s*)?(شد(?!ه)|کردم|می)|حذف\s*(شد(?!ه)|کردم|ش\s*می)|"
+    r"انجام\s*(شد(?!ه)|ش\s*می|دادم)|به‌روز\s*شد(?!ه)|تغییر\s*(دادم|کرد(?!ه)))"
+)
+
+NOTHING_DONE = (
+    "🤔 چیزی ثبت یا اصلاح نشد — مطمئن نشدم منظورت کدوم مورده.\n"
+    "روی کارتش ریپلای بزن، یا بگو کدوم (مثلاً «همون ۸۶ تومنیِ دیشب»)."
+)
+
+
+def claims_action(text: str) -> bool:
+    """آیا متن ادعا می‌کند کاری انجام شده/می‌شود؟ (برای جلوگیری از قولِ بی‌پشتوانه)"""
+    return bool(_ACTION_CLAIM.search(text or ""))
+
+
+def _update_lines(updated: list[int], dupdated: list[int], gupdated: list[int],
+                  skip: set[int]) -> list[str]:
+    """خلاصه‌ی تغییراتِ واقعی — از دیتابیس، نه از حرفِ مدل.
+
+    کارتِ اصلاح‌شده سرِ جای خودش (شاید خیلی بالاتر در گفتگو) ویرایش می‌شود و کاربر
+    نمی‌بیندش؛ این خط همین‌جا می‌گوید دقیقاً چه چیزی عوض شد.
+    """
+    lines = []
+    for tid in updated:
+        if tid in skip:
+            continue
+        txn = repo.get_transaction(tid)
+        if not txn:
+            continue
+        title = (txn.get("title") or "").strip() or "(بی‌عنوان)"
+        line = f"✏️ اصلاح شد: {title} — {format_amount(txn.get('amount'), txn.get('currency_display', 'toman'))}"
+        missing = [label for label, gap in (("عنوان", not (txn.get("title") or "").strip()),
+                                            ("مبلغ", txn.get("amount") is None)) if gap]
+        if missing:
+            line += f" (هنوز ناقص: {' و '.join(missing)})"
+        lines.append(line)
+    for did in dupdated:
+        debt = repo.get_debt(did)
+        if debt:
+            rest = debts_service.remaining(debt)
+            lines.append(f"✏️ {debts_service.KIND_LABELS.get(debt.get('kind'), 'بدهی')} "
+                         f"{debt.get('counterparty') or ''} به‌روز شد — مانده "
+                         f"{format_amount(rest, debt.get('currency_display', 'toman'))}")
+    for gid in gupdated:
+        goal = repo.get_goal(gid)
+        if goal:
+            lines.append(f"🎯 هدفِ «{goal.get('topic') or '—'}» به‌روز شد")
+    return lines
+
+
+async def _ask(update: Update, user_id: int, text: str, keyboard) -> None:
+    """سؤالی که ربات از کاربر می‌پرسد — در حافظه هم می‌ماند تا جوابش بی‌زمینه نباشد."""
+    await update.message.reply_text(text, reply_markup=keyboard)
+    memory.remember_bot(user_id, text)
+
+
 async def _emit(update: Update, context: ContextTypes.DEFAULT_TYPE, *, results: list,
-                weight: int, user_mem: str, used: int, override_reply: str | None,
-                data_answer: str) -> None:
-    """نتیجه‌ی یک ثبت را می‌فرستد: متنِ پاسخ + کارت‌ها + ارزیابیِ اهداف."""
+                weight: int, user_mem: str, used: int, data_answer: str) -> None:
+    """نتیجه‌ی یک ثبت را می‌فرستد: متنِ پاسخ + کارت‌ها + ارزیابیِ اهداف.
+
+    متنِ پاسخ از **آنچه واقعاً اتفاق افتاد** ساخته می‌شود، نه از حرفِ مدل. قبلاً اگر
+    هیچ‌چیز ثبت یا اصلاح نمی‌شد، باز «ثبت شد ✅» یا قولِ روتر («الان اصلاحش می‌کنم») نشان
+    داده می‌شد — کاربر فکر می‌کرد کار انجام شده و نشده بود.
+    """
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
 
     created, updated, gcreated, gupdated = [], [], [], []
-    dcreated, dupdated, notes, ambiguous = [], [], [], []
+    dcreated, dupdated, notes, ambiguous, deletions = [], [], [], [], []
     for r in results:
         ambiguous += r.clarifications
+        deletions += [d for d in r.deletion_requests if d not in deletions]
         created += r.created
         updated += r.updated
         gcreated += r.goals_created
@@ -225,23 +335,39 @@ async def _emit(update: Update, context: ContextTypes.DEFAULT_TYPE, *, results: 
         dupdated += r.debts_updated
         notes += [n for n in r.notes if n not in notes]
 
+    changed = bool(created or updated or gcreated or gupdated or dcreated or dupdated)
+    asking = bool(ambiguous or deletions)
+
     memory.remember(user_id, "user", user_mem, weight=weight)
-    if override_reply:
-        reply = override_reply
-    elif weight > 1:
-        reply = MULTIPART_REPLY
+
+    model_reply = ""
+    if weight == 1 and results:
+        model_reply = (results[0].reply or "").strip()
+        if model_reply in ("باشه", "باشه 🙂"):
+            model_reply = ""
+
+    if changed:
+        reply = MULTIPART_REPLY if weight > 1 else (model_reply or RECORD_REPLY)
+    elif model_reply and not claims_action(model_reply):
+        reply = model_reply            # سؤالِ روشن‌کننده یا حرفِ انسانی
+    elif asking or data_answer:
+        reply = ""                     # سؤال/جوابِ دیتایی خودش پایین می‌آید
     else:
-        cand = (results[0].reply or "").strip() if results else ""
-        reply = cand if cand and cand not in ("باشه", "باشه 🙂") else RECORD_REPLY
+        reply = NOTHING_DONE
+
+    extra = _update_lines(updated, dupdated, gupdated, skip=set(created))
+    if extra:
+        reply = "\n".join([reply, *extra]).strip() if reply else "\n".join(extra)
     if data_answer:
         reply = f"{reply}\n\n{data_answer}".strip()
     for note in notes:
         reply = f"{reply}\n\n{note}".strip()
     notice = _threshold_notice(used, used + weight)
     if notice:
-        reply = f"{reply}\n\n{notice}"
-    await update.message.reply_text(reply)
-    memory.remember(user_id, "assistant", reply)
+        reply = f"{reply}\n\n{notice}".strip()
+    if reply:
+        await update.message.reply_text(reply)
+        memory.remember(user_id, "assistant", reply)
 
     shown: set[int] = set()
     for tid in created:
@@ -262,8 +388,16 @@ async def _emit(update: Update, context: ContextTypes.DEFAULT_TYPE, *, results: 
     for clar_id in ambiguous:
         question = clarify_service.question(clar_id)
         if question:
-            await update.message.reply_text(question,
-                                            reply_markup=clarify_keyboard(clar_id))
+            await _ask(update, user_id, question, clarify_keyboard(clar_id))
+
+    # حذف با حرف‌زدن هیچ‌وقت مستقیم انجام نمی‌شود — برگشت‌ناپذیر است؛ اول تأیید.
+    for txn_id in deletions:
+        txn = repo.get_transaction(txn_id)
+        if txn:
+            title = (txn.get("title") or "").strip() or "(بی‌عنوان)"
+            amount = format_amount(txn.get("amount"), txn.get("currency_display", "toman"))
+            await _ask(update, user_id, f"🗑 این رو حذف کنم؟\n{title} — {amount} (#{txn_id})",
+                       delete_confirm_keyboard(txn_id))
 
     gshown: set[int] = set()
     for gid in gcreated:
@@ -280,7 +414,11 @@ async def _emit(update: Update, context: ContextTypes.DEFAULT_TYPE, *, results: 
 
 async def _process(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
                    user_text: str | None = None, audio_file_id: str | None = None,
-                   voice_duration: int = 0, context_note: str = "") -> None:
+                   voice_duration: int = 0, context_note: str = "",
+                   force_record: bool = False) -> None:
+    """force_record: ریپلای روی چیزی که به یک رکوردِ مشخص اشاره می‌کند (کارت، یادآوری)
+    تقریباً همیشه درباره‌ی همان رکورد است؛ آن را از مسیرِ گفتگوییِ روتر عبور نمی‌دهیم تا
+    با یک جوابِ خوش‌لحن ولی بی‌اثر گم نشود."""
     user_id = update.effective_user.id
 
     # راهنمای نیت یک‌بارمصرف است: همین پیام از آن استفاده می‌کند و بعد پاک می‌شود.
@@ -308,6 +446,8 @@ async def _process(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
     status_msg = await update.message.reply_text("🧠 …")
     try:
         hist = memory.history(user_id)
+        # دفترِ فعلی — تا مدل بداند «اون ۸۶ تومنی» کدام تراکنش است.
+        book = ledger.snapshot(user_id)
         short_voice = bool(audio_file_id) and voice_duration <= settings.voice_oneshot_max_seconds
 
         # مرحله‌ی ۱ — آماده‌سازیِ متن.
@@ -319,15 +459,15 @@ async def _process(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
                 audio_ogg=blob, user_id=user_id, history=hist,
                 profile=memory.profile(user_id),
                 allowed_tags=tags_service.allowed_tag_names(repo.get_tags()),
-                context_note=context_note,
+                context_note=context_note, ledger=book,
             )
             text = (r.transcript or "").strip()
             if (r.created or r.updated or r.goals_created or r.goals_updated
-                    or r.debts_created or r.debts_updated):
+                    or r.debts_created or r.debts_updated or r.clarifications
+                    or r.deletion_requests or force_record):
                 await status_msg.delete()
                 await _emit(update, context, results=[r], weight=1,
-                            user_mem=text or "(ویس)", used=used,
-                            override_reply=None, data_answer="")
+                            user_mem=text or "(ویس)", used=used, data_answer="")
                 return
             # ویس چیزی ثبت نکرد → احتمالاً سؤال یا گفتگو بود؛ با روتر ادامه بده.
         else:
@@ -338,10 +478,18 @@ async def _process(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
             text = (user_text or "").strip()
 
         # مرحله‌ی ۲ — نیت‌خوانیِ ارزان.
-        decision = await router.route(text=text, history=hist, reply_note=context_note)
+        decision = await router.route(text=text, history=hist, reply_note=context_note,
+                                      ledger=book)
+        # روتر هیچ‌کاری انجام نمی‌دهد. اگر در جوابش قولِ انجامِ کاری داد («الان اصلاحش
+        # می‌کنم»)، یعنی خودش فهمیده کاربر تغییری می‌خواهد ولی پرچمِ record را نزده —
+        # همان باگِ گزارش‌شده. آن قول را نشان نمی‌دهیم؛ کار را واقعاً اجرا می‌کنیم و نتیجه‌ی
+        # واقعی را می‌گوییم.
+        if force_record or (not decision.record and claims_action(decision.reply)):
+            decision.record = True
         data_answer = ""
         if decision.data_query:
-            data_answer = await agent.answer_data(text, hist, user_id)
+            question = f"{context_note}\n\n{text}" if context_note else text
+            data_answer = await agent.answer_data(question, hist, user_id)
 
         # مسیرِ گفتگو/گزارش (بدون ثبت): همین‌جا جواب بده، بدون کارت.
         if not decision.record:
@@ -362,7 +510,7 @@ async def _process(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
         if decide_parts(text) == -1:
             await status_msg.edit_text(TOO_LONG_MSG)
             return
-        results, weight = await _text_pipeline(text, context_note, user_id)
+        results, weight = await _text_pipeline(text, context_note, user_id, book)
     except LLMUnavailableError:
         await status_msg.edit_text(USER_FACING_UNAVAILABLE)
         return
@@ -372,10 +520,9 @@ async def _process(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
         return
 
     await status_msg.delete()
-    override = decision.reply or (MULTIPART_REPLY if weight > 1 else None)
+    # جوابِ روتر عمداً اینجا استفاده نمی‌شود: روتر قبل از اجرا حرف زده و نمی‌داند چه شد.
     await _emit(update, context, results=results, weight=weight,
-                user_mem=text or "(ویس)", used=used,
-                override_reply=override, data_answer=data_answer)
+                user_mem=text or "(ویس)", used=used, data_answer=data_answer)
 
 
 # ---------- ویرایش دکمه‌ای ----------

@@ -39,6 +39,14 @@ def clarify_keyboard(clar_id: int) -> InlineKeyboardMarkup:
     ]])
 
 
+def delete_confirm_keyboard(txn_id: int) -> InlineKeyboardMarkup:
+    """حذفی که با حرف‌زدن خواسته شده، فقط با تأییدِ صریح انجام می‌شود."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🗑 بله، حذف کن", callback_data=f"delete:{txn_id}"),
+        InlineKeyboardButton("نه، بمونه", callback_data=f"keep:{txn_id}"),
+    ]])
+
+
 def cancel_keyboard() -> InlineKeyboardMarkup:
     """تنها دکمه‌ی هر پرسشِ ویرایش: راهِ خروج بدون جواب‌دادن."""
     return InlineKeyboardMarkup(
