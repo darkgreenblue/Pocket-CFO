@@ -16,8 +16,11 @@ import base64
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
+
+import jdatetime
 
 from bot.services import tags as tags_service
 from bot.utils import jalali
@@ -67,6 +70,7 @@ class VisionLine:
     raw: str = ""
     suggested_tags: list[str] = field(default_factory=list)
     period: Optional[tuple[int, int]] = None       # (سال، ماه) شمسی اگر مالِ ماهِ گذشته است
+    occurred_on: Optional[str] = None              # تاریخِ واقعیِ ردیف (میلادی YYYY-MM-DD) برای تشخیصِ تکراری
     source_amount: Optional[Any] = None            # عددِ روی عکس (برای کنترلِ جمع)
 
 
@@ -213,6 +217,25 @@ def _jalali_ym(date_text: Any) -> Optional[tuple[int, int]]:
     return year, month
 
 
+def occurred_on(date_text: Any) -> Optional[str]:
+    """«1405/07/09» → «2026-10-01» (میلادی، برای مقایسه با created_at). نامعتبر/آینده → None."""
+    text = normalize_digits(_text(date_text)).replace("-", "/").replace(".", "/")
+    parts = [p for p in text.split("/") if p.strip().isdigit()]
+    if len(parts) < 3:
+        return None
+    year, month, day = int(parts[0]), int(parts[1]), int(parts[2])
+    if year < 100:
+        year += 1400
+    try:
+        greg = jdatetime.date(year, month, day).togregorian()
+    except ValueError:
+        return None
+    # یک روز تحمل: ساعتِ سرور (UTC) ممکن است هنوز «دیروزِ» تهران باشد.
+    if greg > date.today() + timedelta(days=1):
+        return None
+    return greg.isoformat()
+
+
 def _past_period(date_text: Any) -> Optional[tuple[int, int]]:
     """فقط اگر تاریخ مالِ یک ماهِ **گذشته** (حداکثر یک سال قبل) است؛ ماهِ جاری/آینده → None."""
     ym = _jalali_ym(date_text)
@@ -290,6 +313,7 @@ def normalize(data: dict[str, Any]) -> VisionReading:
             note=_note(item, kind, merchant, unit), raw=raw, suggested_tags=tags,
             period=caption_period or _past_period(item.get("date")) or receipt_period,
             source_amount=source_amount,
+            occurred_on=occurred_on(item.get("date")) or occurred_on(data.get("date")),
         ))
 
     if kind == KIND_RECEIPT:
@@ -358,8 +382,12 @@ def _fa_count(n: int) -> str:
     return to_persian_digits(n)
 
 
-def summary(reading: VisionReading, created: int, incomplete: int) -> str:
-    """متنِ پاسخ — از روی تعدادِ واقعیِ ثبت‌شده‌ها، نه از حرفِ مدل."""
+def summary(reading: VisionReading, created: int, incomplete: int,
+            basket_match: Optional[str] = None) -> str:
+    """متنِ پاسخ — از روی تعدادِ واقعیِ ثبت‌شده‌ها، نه از حرفِ مدل.
+
+    `basket_match`: توصیفِ تراکنشِ تکیِ قبلی‌ای که جمعش با کلِ این رسید یکی است.
+    """
     if reading.kind == KIND_NOT_FINANCIAL:
         return NOT_FINANCIAL_REPLY
     if reading.kind == KIND_UNREADABLE:
@@ -400,6 +428,9 @@ def summary(reading: VisionReading, created: int, incomplete: int) -> str:
             f"({format_amount(check.printed)}) نمی‌خونه — احتمالاً یه قلم جا افتاده یا اشتباه "
             "خونده شده. لطفاً کارت‌ها رو با رسید چک کن."
         )
+    if created and basket_match:
+        lines.append(f"⚠️ جمعِ این رسید با تراکنشِ {basket_match} یکیه — اگه همون خریده، "
+                     "یا اون یکی رو پاک کن یا کارت‌های این رسید رو.")
     if created and reading.has_tax_or_discount and reading.payable is not None:
         lines.append(f"ℹ️ مالیات/تخفیفِ رسید جدا ثبت نشد؛ مبلغِ قابلِ پرداختِ رسید "
                      f"{format_amount(reading.payable)} بود.")

@@ -18,6 +18,7 @@ from bot.handlers.keyboards import (
 )
 from bot.services import clarify as clarify_service
 from bot.services import debts as debts_service
+from bot.services import duplicates as duplicates_service
 from bot.services import household as household_service
 from bot.services import reports as reports_service
 from bot.services.reports import build_report
@@ -135,6 +136,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         repo.delete_transaction(txn_id)
         await query.answer("حذف شد.")
         await query.edit_message_text("🗑 حذف شد.")
+        # اگر این «اصلِ» یک تراکنشِ احتمالاً تکراری بود، هشدارِ آن کارت‌ها دیگر معنا ندارد.
+        for other_id in repo.release_duplicates_of(txn_id):
+            await cards.refresh_card(context.bot, query.message.chat_id, other_id)
         # اگر حذف از پیامِ تأیید آمده (نه از خودِ کارت)، کارتِ اصلی هم باید بگوید حذف شده؛
         # وگرنه تراکنشی که دیگر نیست همچنان با دکمه‌های فعال در گفتگو می‌ماند.
         card_chat, card_msg = txn.get("card_chat_id"), txn.get("card_message_id")
@@ -331,4 +335,5 @@ async def _on_clarify(query, context, arg: str, user_id: int) -> None:
         await cards.send_debt_card(context.bot, query.message.chat_id, obj_id)
     else:
         await query.edit_message_text("💳 به‌عنوان خرج ثبت شد.")
+        duplicates_service.flag_new(user_id, [obj_id])
         await cards.send_card(context.bot, query.message.chat_id, obj_id)

@@ -15,6 +15,7 @@ from bot.db import repo
 from bot.flows.debt_card import render_debt_card
 from bot.flows.draft_flow import render_card
 from bot.flows.goal_card import render_goal_card
+from bot.services import duplicates
 from bot.services import household as household_service
 
 logger = logging.getLogger(__name__)
@@ -28,8 +29,18 @@ def recorder_name(row: dict[str, Any]) -> Optional[str]:
     return household_service.display_name(user_id)
 
 
+def duplicate_note(txn: dict[str, Any]) -> Optional[str]:
+    """توصیفِ «اصلِ» یک تراکنشِ احتمالاً تکراری — اگر اصل هنوز وجود دارد."""
+    original_id = txn.get("duplicate_of")
+    if not original_id:
+        return None
+    original = repo.get_transaction(int(original_id))
+    return duplicates.describe(original) if original else None
+
+
 def render_txn(txn: dict[str, Any], *, expanded: bool = False):
-    return render_card(txn, expanded=expanded, recorder_name=recorder_name(txn))
+    return render_card(txn, expanded=expanded, recorder_name=recorder_name(txn),
+                       duplicate_of=duplicate_note(txn))
 
 
 def render_goal(goal: dict[str, Any], *, expanded: bool = False):

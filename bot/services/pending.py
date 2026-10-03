@@ -12,6 +12,7 @@ import os
 from bot.db import repo
 from bot.handlers.cards import send_card, send_debt_card, send_goal_card
 from bot.llm import agent
+from bot.services import duplicates
 from bot.services import goals
 from bot.services import memory
 from bot.services import tags as tags_service
@@ -54,6 +55,8 @@ async def _flush_photos(bot, user_id: int, entries: list[dict]) -> tuple[list[in
             logger.exception("پردازشِ عکسِ صف (%s) ناموفق بود", entry.get("file_id"))
             replies.append("⚠️ یکی از عکس‌هایی که فرستاده بودی خونده نشد؛ لطفاً دوباره بفرستش.")
             continue
+        # هر عکس یک دسته‌ی جداست: با متن/ویسِ همین صف و عکس‌های قبلی هم مقایسه می‌شود.
+        duplicates.flag_new(user_id, result.created)
         created += result.created
         if result.reply:
             replies.append(result.reply)
@@ -105,6 +108,7 @@ async def flush_pending(bot, user_id: int) -> bool:
                 pass
             return False
 
+    duplicates.flag_new(user_id, result.created)
     photo_created, photo_replies = await _flush_photos(bot, user_id, photos)
 
     repo.clear_pending(user_id)

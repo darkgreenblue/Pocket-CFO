@@ -50,6 +50,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
     if "household_id" not in txn_cols:
         conn.execute("ALTER TABLE transactions ADD COLUMN household_id INTEGER")
+    # تشخیصِ تکراری: تاریخِ واقعیِ خرج (از پیامکِ بانک) و اینکه این تراکنش شبیهِ کدام قبلی است.
+    if "occurred_on" not in txn_cols:
+        conn.execute("ALTER TABLE transactions ADD COLUMN occurred_on TEXT")
+    if "duplicate_of" not in txn_cols:
+        conn.execute("ALTER TABLE transactions ADD COLUMN duplicate_of INTEGER")
 
     msg_cols = {r["name"] for r in conn.execute("PRAGMA table_info(messages)").fetchall()}
     if "weight" not in msg_cols:
@@ -65,6 +70,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
                  "ON transactions(household_id, status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_goal_household "
                  "ON goals(household_id, jyear, jmonth)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_txn_duplicate_of ON transactions(duplicate_of)")
 
     # backfill ماه شمسی برای تراکنش‌های قدیمی از created_at
     rows = conn.execute(
@@ -367,6 +373,7 @@ def create_transaction(
     status: str = "draft",
     jyear: Optional[int] = None,
     jmonth: Optional[int] = None,
+    occurred_on: Optional[str] = None,
 ) -> int:
     now = datetime.now().isoformat()
     confirmed_at = now if status == "confirmed" else None
@@ -376,16 +383,32 @@ def create_transaction(
             """INSERT INTO transactions
                (user_id, household_id, status, title, amount, currency_display, note,
                 mentioned_items, needs_later_completion, transcript, source,
-                jyear, jmonth, created_at, confirmed_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                jyear, jmonth, created_at, confirmed_at, occurred_on)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 user_id, household_id, status, title, amount, currency_display, note,
                 json.dumps(mentioned_items, ensure_ascii=False),
                 int(needs_later_completion), transcript, source,
-                jyear, jmonth, now, confirmed_at,
+                jyear, jmonth, now, confirmed_at, occurred_on,
             ),
         )
         return cur.lastrowid
+
+
+def set_duplicate_of(txn_id: int, original_id: Optional[int]) -> None:
+    with _conn() as conn:
+        conn.execute("UPDATE transactions SET duplicate_of = ? WHERE id = ?",
+                     (original_id, txn_id))
+
+
+def release_duplicates_of(original_id: int) -> list[int]:
+    """اصلِ یک «احتمالاً تکراری» حذف شد → هشدارِ کپی‌هایش دیگر معنا ندارد. idهایشان را برمی‌گرداند."""
+    with _conn() as conn:
+        rows = conn.execute("SELECT id FROM transactions WHERE duplicate_of = ?",
+                            (original_id,)).fetchall()
+        conn.execute("UPDATE transactions SET duplicate_of = NULL WHERE duplicate_of = ?",
+                     (original_id,))
+    return [r["id"] for r in rows]
 
 
 def set_card_message(txn_id: int, chat_id: int, message_id: int) -> None:

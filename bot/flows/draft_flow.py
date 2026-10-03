@@ -44,7 +44,9 @@ def transcript_line(txn: dict[str, Any]) -> Optional[str]:
 
 
 def render_card(txn: dict[str, Any], *, expanded: bool = False,
-                recorder_name: Optional[str] = None) -> tuple[str, InlineKeyboardMarkup]:
+                recorder_name: Optional[str] = None,
+                duplicate_of: Optional[str] = None) -> tuple[str, InlineKeyboardMarkup]:
+    """`duplicate_of` توصیفِ تراکنشی است که این یکی احتمالاً تکرارِ آن است (فقط هشدار)."""
     title = (txn.get("title") or "").strip() or "— (نامشخص)"
     amount = format_amount(txn.get("amount"), txn.get("currency_display", "toman"))
 
@@ -71,10 +73,14 @@ def render_card(txn: dict[str, Any], *, expanded: bool = False,
             ("عنوان" if not txn.get("title") else "مبلغ")
         lines.append(f"⚠️ نیازمند تکمیل: {missing}")
 
-    return "\n".join(lines), _keyboard(txn, expanded=expanded)
+    if duplicate_of:
+        lines.append(f"⚠️ احتمالاً تکراریِ {duplicate_of} — اگه همونه، پاکش کن.")
+
+    return "\n".join(lines), _keyboard(txn, expanded=expanded, duplicate=bool(duplicate_of))
 
 
-def _keyboard(txn: dict[str, Any], *, expanded: bool) -> InlineKeyboardMarkup:
+def _keyboard(txn: dict[str, Any], *, expanded: bool,
+              duplicate: bool = False) -> InlineKeyboardMarkup:
     tid = txn["id"]
     # رونویسی هم «جزئیات» حساب می‌شود، وگرنه روی ثبتِ صوتیِ کم‌جزئیات دکمه‌ای نبود که
     # بشود دید ربات چه شنیده — دقیقاً همان‌جایی که بیشتر لازمش داریم.
@@ -84,7 +90,8 @@ def _keyboard(txn: dict[str, Any], *, expanded: bool) -> InlineKeyboardMarkup:
         InlineKeyboardButton("✏️ مبلغ", callback_data=f"editamt:{tid}"),
         InlineKeyboardButton("✏️ عنوان", callback_data=f"edittitle:{tid}"),
     ]]
-    last = [InlineKeyboardButton("🗑 حذف", callback_data=f"delete:{tid}")]
+    last = [InlineKeyboardButton("🗑 تکراریه، حذف" if duplicate else "🗑 حذف",
+                                 callback_data=f"delete:{tid}")]
     if has_extra:
         last.insert(0, InlineKeyboardButton(
             "بستن جزئیات" if expanded else "جزئیات", callback_data=f"details:{tid}"))

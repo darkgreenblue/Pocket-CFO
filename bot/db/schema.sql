@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS transactions (
     jyear                  INTEGER,
     jmonth                 INTEGER,
     created_at             TEXT NOT NULL,
-    confirmed_at           TEXT
+    confirmed_at           TEXT,
+    occurred_on            TEXT,                             -- تاریخِ واقعیِ خرج (میلادی، YYYY-MM-DD) اگر معلوم است، مثلاً از پیامکِ بانک
+    duplicate_of           INTEGER                           -- «احتمالاً تکراریِ» این تراکنش (فقط هشدار؛ ثبت انجام شده)
 );
 
 CREATE TABLE IF NOT EXISTS transaction_tags (
