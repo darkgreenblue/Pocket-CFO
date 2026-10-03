@@ -29,7 +29,7 @@ from bot.handlers.commands import (
     cmd_shortcut,
     cmd_start,
 )
-from bot.handlers.messages import handle_text, handle_unsupported, handle_voice
+from bot.handlers.messages import handle_photo, handle_text, handle_unsupported, handle_voice
 from bot.ingest.server import IngestServer
 from bot.services.ingest import deliver_undelivered_cards, purge_old_requests
 from bot.services.pending import morning_job
@@ -81,12 +81,14 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("household", cmd_household))
     app.add_handler(CommandHandler("shortcut", cmd_shortcut))
     app.add_handler(CallbackQueryHandler(on_callback))
-    # فقط ویس تلگرام پذیرفته می‌شود؛ فایل صوتی/تصویری رد می‌شود.
+    # ویس، متن و عکس (عکسِ معمولی یا عکسی که «فایل» فرستاده شده). بقیه رد می‌شوند.
+    # ترتیب مهم است: هندلرِ عکس باید قبل از رد‌کننده‌ی عمومیِ Document بیاید.
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
     app.add_handler(
         MessageHandler(
-            filters.AUDIO | filters.VIDEO | filters.VIDEO_NOTE | filters.PHOTO | filters.Document.ALL,
+            filters.AUDIO | filters.VIDEO | filters.VIDEO_NOTE | filters.Document.ALL,
             handle_unsupported,
         )
     )

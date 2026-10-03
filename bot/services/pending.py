@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 
@@ -26,8 +27,41 @@ def _format_of(path: str) -> str:
     return ext or "ogg"
 
 
+def _photo_entry(content: str) -> dict | None:
+    """ردیفِ صفِ عکس: JSON با file_id/mime/caption. ردیفِ خراب → None (لاگ می‌شود)."""
+    try:
+        data = json.loads(content)
+    except (TypeError, json.JSONDecodeError):
+        logger.warning("ردیفِ عکسِ صف قابل خواندن نبود: %r", (content or "")[:100])
+        return None
+    return data if isinstance(data, dict) and data.get("file_id") else None
+
+
+async def _flush_photos(bot, user_id: int, entries: list[dict]) -> tuple[list[int], list[str]]:
+    """هر عکسِ صف جدا خوانده می‌شود (هر عکس یک رسید/اسکرین‌شاتِ مستقل است)."""
+    created: list[int] = []
+    replies: list[str] = []
+    tags = tags_service.allowed_tag_names(repo.get_tags())
+    for entry in entries:
+        try:
+            f = await bot.get_file(entry["file_id"])
+            blob = bytes(await f.download_as_bytearray())
+            result = await agent.converse_image(
+                image=blob, mime=entry.get("mime") or "image/jpeg",
+                caption=entry.get("caption") or "", user_id=user_id, allowed_tags=tags,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("پردازشِ عکسِ صف (%s) ناموفق بود", entry.get("file_id"))
+            replies.append("⚠️ یکی از عکس‌هایی که فرستاده بودی خونده نشد؛ لطفاً دوباره بفرستش.")
+            continue
+        created += result.created
+        if result.reply:
+            replies.append(result.reply)
+    return created, replies
+
+
 async def flush_pending(bot, user_id: int) -> bool:
-    """صفِ کاربر را در یک درخواست ثبت می‌کند. True اگر چیزی پردازش شد."""
+    """صفِ کاربر را ثبت می‌کند (متن/ویس در یک درخواست، هر عکس جدا). True اگر چیزی پردازش شد."""
     items = repo.get_pending(user_id)
     if not items:
         return False
@@ -36,6 +70,7 @@ async def flush_pending(bot, user_id: int) -> bool:
     voice_ids = [i["content"] for i in items if i["kind"] == "voice"]
     # ویسِ شرتکات file_id تلگرامی ندارد؛ روی دیسکِ خودمان ذخیره شده است.
     voice_paths = [i["content"] for i in items if i["kind"] == "voice_file"]
+    photos = [e for e in (_photo_entry(i["content"]) for i in items if i["kind"] == "photo") if e]
 
     wait = await bot.send_message(chat_id=user_id, text=WAIT_MSG)
 
@@ -53,19 +88,24 @@ async def flush_pending(bot, user_id: int) -> bool:
         except OSError:
             logger.warning("خواندن ویسِ صف‌شده (%s) ناموفق بود", path)
 
-    try:
-        result = await agent.converse_batch(
-            text_parts=text_parts, audio_items=audio_items, user_id=user_id,
-            profile=memory.profile(user_id),
-            allowed_tags=tags_service.allowed_tag_names(repo.get_tags()),
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("پردازش صف برای %s ناموفق بود", user_id)
+    result = agent.AgentResult(reply="")
+    # فقط وقتی متن/ویسی هست کالِ دسته‌ای می‌زنیم؛ صفِ فقط-عکس نباید یک کالِ خالی بسوزاند.
+    if text_parts or audio_items:
         try:
-            await wait.edit_text("ثبت تراکنش‌های قبلی الان ممکن نشد؛ بعداً دوباره تلاش می‌کنم.")
+            result = await agent.converse_batch(
+                text_parts=text_parts, audio_items=audio_items, user_id=user_id,
+                profile=memory.profile(user_id),
+                allowed_tags=tags_service.allowed_tag_names(repo.get_tags()),
+            )
         except Exception:  # noqa: BLE001
-            pass
-        return False
+            logger.exception("پردازش صف برای %s ناموفق بود", user_id)
+            try:
+                await wait.edit_text("ثبت تراکنش‌های قبلی الان ممکن نشد؛ بعداً دوباره تلاش می‌کنم.")
+            except Exception:  # noqa: BLE001
+                pass
+            return False
+
+    photo_created, photo_replies = await _flush_photos(bot, user_id, photos)
 
     repo.clear_pending(user_id)
     for path in voice_paths:
@@ -85,11 +125,16 @@ async def flush_pending(bot, user_id: int) -> bool:
     )
     for tid in result.created:
         await send_card(bot, user_id, tid)
+    for reply in photo_replies:
+        await bot.send_message(chat_id=user_id, text=reply)
+    for tid in photo_created:
+        await send_card(bot, user_id, tid)
     for did in result.debts_created:
         await send_debt_card(bot, user_id, did)
     for gid in result.goals_created:
         await send_goal_card(bot, user_id, gid)
-    if result.created or result.updated or result.goals_created or result.goals_updated:
+    if (result.created or result.updated or result.goals_created or result.goals_updated
+            or photo_created):
         await goals.evaluate_and_alert(bot, user_id)
     return True
 

@@ -13,8 +13,9 @@ from typing import Any, Optional, Union
 
 from bot.config import settings
 from bot.db import repo
+from bot.llm import vision
 from bot.llm.client import chat
-from bot.llm.prompts import EXTRACT_SYSTEM, PROFILE_BLOCK, QUERY_SYSTEM
+from bot.llm.prompts import EXTRACT_SYSTEM, PROFILE_BLOCK, QUERY_SYSTEM, VISION_SYSTEM
 from bot.llm.tools import TOOLS_SPEC, dispatch
 from bot.services import clarify as clarify_service
 from bot.services import debts as debts_service
@@ -314,6 +315,48 @@ async def converse_batch(*, text_parts: list[str], audio_items: list[tuple[bytes
     return await _run_extraction(user_content=content, has_audio=has_audio, user_id=user_id,
                                  history=None, profile=profile, allowed_tags=allowed_tags or [],
                                  only_transactions=only_transactions, source=source)
+
+
+async def converse_image(*, image: bytes, mime: str = "image/jpeg", caption: str = "",
+                         user_id: int, allowed_tags=None) -> AgentResult:
+    """ورودیِ عکس (رسید/پیامکِ بانکی/موبایل‌بانک) → یک تراکنش برای هر ردیف.
+
+    عمداً یک‌شات و **بدونِ تاریخچه** است (مثل میان‌بر و صفِ صبح): عکس خودش کامل است و
+    خرج‌های قبلیِ روز جلوی مدل فقط ریسکِ ثبتِ دوباره‌شان را می‌سازد. و عمداً فقط تراکنش
+    می‌سازد — بدهی، هدف و ویرایش از روی عکس انجام نمی‌شود.
+    """
+    system = VISION_SYSTEM.format(today=jalali.today_str(),
+                                  tags="، ".join(allowed_tags or []) or "(خالی)")
+    messages = [{"role": "system", "content": system},
+                {"role": "user", "content": vision.user_content(image, mime, caption)}]
+    msg = await chat(messages, json_mode=True, timeout=settings.image_llm_timeout,
+                     max_tokens=settings.image_max_output_tokens)
+    reading = vision.normalize(vision.loads(msg.content or ""))
+
+    created: list[int] = []
+    incomplete = 0
+    for line in reading.lines:
+        item = {"title": line.title, "amount": line.amount, "currency": line.currency,
+                "note": line.note, "suggested_tags": line.suggested_tags}
+        try:
+            txn_id = txn_service.create_from_item(user_id, item, transcript=line.raw,
+                                                  source="photo", period=line.period)
+        except Exception:  # noqa: BLE001
+            logger.exception("vision: ساختِ تراکنش از ردیفِ عکس ناموفق بود: %r", item)
+            continue
+        created.append(txn_id)
+        if line.title is None or line.amount is None:
+            incomplete += 1
+
+    logger.info(
+        "vision: user=%s kind=%s unit=%s (%s) rows=%s created=%s incomplete=%s "
+        "deposits_ignored=%s dropped=%s check=%s",
+        user_id, reading.kind, reading.source_unit, reading.unit_reason, len(reading.lines),
+        len(created), incomplete, reading.deposits_ignored, reading.dropped_over_limit,
+        reading.check.status if reading.check else None,
+    )
+    return AgentResult(reply=vision.summary(reading, len(created), incomplete),
+                       transcript=vision.describe(reading, caption), created=created)
 
 
 async def answer_data(user_text: str, history: Optional[list[dict]], user_id: int) -> str:

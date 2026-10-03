@@ -97,9 +97,15 @@ def _chat_attempts() -> list[tuple[str, float]]:
     ]
 
 
-async def chat(messages: list[dict], tools: list[dict] | None = None, json_mode: bool = False):
-    """یک درخواست chat را با زنجیره‌ی فال‌بک می‌زند و پیام دستیار را برمی‌گرداند."""
+async def chat(messages: list[dict], tools: list[dict] | None = None, json_mode: bool = False,
+               *, timeout: float | None = None, max_tokens: int | None = None):
+    """یک درخواست chat را با زنجیره‌ی فال‌بک می‌زند و پیام دستیار را برمی‌گرداند.
+
+    `timeout` و `max_tokens` برای ورودی‌های سنگین‌تر (عکس) قابلِ تغییرند؛ پیش‌فرض همان
+    سقف‌های متن/ویس است.
+    """
     client = _get_client()
+    timeout = timeout or settings.llm_timeout
     last_error: Exception | None = None
     for model, delay in _chat_attempts():
         if delay:
@@ -109,7 +115,7 @@ async def chat(messages: list[dict], tools: list[dict] | None = None, json_mode:
                 "model": model,
                 "messages": messages,
                 "temperature": 0.2,
-                "max_tokens": settings.llm_max_output_tokens,
+                "max_tokens": max_tokens or settings.llm_max_output_tokens,
             }
             if tools:
                 kwargs["tools"] = tools
@@ -117,9 +123,13 @@ async def chat(messages: list[dict], tools: list[dict] | None = None, json_mode:
             if json_mode:
                 kwargs["response_format"] = {"type": "json_object"}
             resp = await asyncio.wait_for(
-                client.chat.completions.create(**kwargs), timeout=settings.llm_timeout
+                client.chat.completions.create(**kwargs), timeout=timeout
             )
-            return resp.choices[0].message
+            choice = resp.choices[0]
+            if getattr(choice, "finish_reason", None) == "length":
+                # خروجیِ بریده‌شده یعنی آخرِ JSON (مثلاً اقلامِ آخرِ رسید) گم شده؛ باید در لاگ دیده شود.
+                logger.warning("پاسخِ مدل به سقفِ توکن خورد و بریده شد (model=%s)", model)
+            return choice.message
         except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
             last_error = exc
             logger.warning("تلاش chat ناموفق (model=%s): %s", model, exc)

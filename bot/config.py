@@ -30,6 +30,9 @@ class Settings:
     llm_timeout: int
     llm_retry_delay: int
     llm_max_output_tokens: int
+    image_llm_timeout: int
+    image_max_output_tokens: int
+    max_image_bytes: int
     chars_per_line: int
     chunk_2_parts: int
     chunk_3_parts: int
@@ -110,6 +113,14 @@ RATE_LIMIT_WINDOW = 30             # طول پنجره به ثانیه
 DAILY_LLM_LIMIT = 20               # سقف پیام‌های روزانه که به LLM می‌روند (مدیریت هزینه)
 HISTORY_MAX_MESSAGES = 50          # سقف پیام‌های حافظه‌ی همان روز که به مدل داده می‌شود
 MAX_TOOL_ROUNDS = 12               # سقف دور‌های tool-calling در هر پیام (چند هزینه در یک پیام)
+
+# ─── ورودیِ عکس (رسید، پیامکِ بانکی، اسکرین‌شاتِ موبایل‌بانک) ───
+# خواندنِ یک رسیدِ ۱۵ قلمی از تایم‌اوتِ ۱۵ ثانیه‌ایِ متن/ویس بیشتر طول می‌کشد، و خروجیِ
+# JSONِ آن (به‌علاوه‌ی توکن‌های فکرکردنِ جمنای) از سقفِ معمول بلندتر است؛ اگر بریده شود
+# اقلامِ آخرِ رسید بی‌صدا گم می‌شوند. پس عکس سقف‌های خودش را دارد.
+IMAGE_LLM_TIMEOUT_SECONDS = 45
+IMAGE_MAX_OUTPUT_TOKENS = 8000
+MAX_IMAGE_MB = 10                  # عکسِ «فایل»ِ بزرگ‌تر رد می‌شود (حفاظِ هزینه/حافظه)
 
 # ─── درِ دومِ ورودی (شرتکاتِ iOS) ───
 # ربات علاوه بر تلگرام، یک endpoint کوچکِ HTTP هم دارد تا وقتی گوشیِ کاربر به تلگرام
@@ -195,6 +206,9 @@ def load_settings() -> Settings:
         llm_timeout=int(_get("LLM_TIMEOUT", str(LLM_TIMEOUT_SECONDS))),
         llm_retry_delay=int(_get("LLM_RETRY_DELAY", str(LLM_RETRY_DELAY_SECONDS))),
         llm_max_output_tokens=int(_get("LLM_MAX_OUTPUT_TOKENS", str(LLM_MAX_OUTPUT_TOKENS))),
+        image_llm_timeout=int(_get("IMAGE_LLM_TIMEOUT", str(IMAGE_LLM_TIMEOUT_SECONDS))),
+        image_max_output_tokens=int(_get("IMAGE_MAX_OUTPUT_TOKENS", str(IMAGE_MAX_OUTPUT_TOKENS))),
+        max_image_bytes=int(_get("MAX_IMAGE_MB", str(MAX_IMAGE_MB))) * 1024 * 1024,
         chars_per_line=int(_get("CHARS_PER_LINE", str(CHARS_PER_LINE))),
         chunk_2_parts=int(_get("CHUNK_2_PARTS", str(CHUNK_2_PARTS))),
         chunk_3_parts=int(_get("CHUNK_3_PARTS", str(CHUNK_3_PARTS))),
