@@ -62,11 +62,13 @@ def title_from_items(items: list) -> Optional[str]:
 
 
 def create_from_item(user_id: int, item: dict[str, Any], *, transcript: str = "",
-                     source: str = "chat", period: Optional[tuple[int, int]] = None) -> int:
+                     source: str = "chat", period: Optional[tuple[int, int]] = None,
+                     occurred_on: Optional[str] = None) -> int:
     """یک تراکنش از آیتم استخراج‌شده‌ی LLM می‌سازد (کامل → confirmed، ناقص → draft).
 
     `period` = (سال، ماه)ِ شمسیِ صریح — برای ردیفِ پیامک/رسیدی که تاریخش مالِ ماهِ گذشته
     است. بر past_month (نامِ ماه از حرفِ کاربر) مقدم است.
+    `occurred_on` = تاریخِ واقعیِ خرج (میلادی YYYY-MM-DD) اگر روی منبع آمده — برای تشخیصِ تکراری.
     """
     title = (item.get("title") or "").strip() or None
     if title is None:
@@ -88,7 +90,7 @@ def create_from_item(user_id: int, item: dict[str, Any], *, transcript: str = ""
         mentioned_items=[str(x) for x in (item.get("mentioned_items") or [])],
         needs_later_completion=bool(item.get("needs_later_completion", False)),
         transcript=transcript, source=source, status=status,
-        jyear=jyear, jmonth=jmonth,
+        jyear=jyear, jmonth=jmonth, occurred_on=occurred_on,
     )
     _apply_tags(txn_id, item.get("suggested_tags") or [], user_id)
     return txn_id

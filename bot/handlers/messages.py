@@ -39,12 +39,13 @@ from bot.llm.client import USER_FACING_UNAVAILABLE, LLMUnavailableError
 from bot.llm.splitter import decide_parts, split_text
 from bot.services import clarify as clarify_service
 from bot.services import debts as debts_service
+from bot.services import duplicates as duplicates_service
 from bot.services import goals as goals_service
 from bot.services import household as household_service
 from bot.services import ledger, memory, pending
 from bot.services import tags as tags_service
 from bot.utils import ratelimit
-from bot.utils.money import format_amount, normalize_digits, parse_amount
+from bot.utils.money import format_amount, normalize_digits, parse_amount, to_persian_digits
 
 TOO_LONG_MSG = "این پیام خیلی طولانیه و کامل پردازش نمی‌شه 🙏 لطفاً کوتاه‌تر و در چند پیام بفرست."
 MULTIPART_REPLY = "همه رو ثبت کردم؛ کارت‌ها پایین 👇"
@@ -408,6 +409,19 @@ def _update_lines(updated: list[int], dupdated: list[int], gupdated: list[int],
     return lines
 
 
+def duplicate_summary(found: dict[int, int]) -> str:
+    """یک خط برای پیامِ پاسخ؛ جزئیاتِ هر مورد روی کارتِ خودش است."""
+    if not found:
+        return ""
+    if len(found) == 1:
+        original = repo.get_transaction(next(iter(found.values())))
+        if original:
+            return (f"⚠️ احتمالاً تکراریِ {duplicates_service.describe(original)} — "
+                    "اگه همونه، روی کارت «🗑 تکراریه، حذف» رو بزن.")
+    return (f"⚠️ {to_persian_digits(len(found))} مورد احتمالاً تکراری‌اند (با تراکنش‌های قبلی "
+            "جور درمیان)؛ روی کارتشون مشخص شده — اگه واقعاً تکراری‌ان، «🗑 تکراریه، حذف».")
+
+
 async def _ask(update: Update, user_id: int, text: str, keyboard) -> None:
     """سؤالی که ربات از کاربر می‌پرسد — در حافظه هم می‌ماند تا جوابش بی‌زمینه نباشد."""
     await update.message.reply_text(text, reply_markup=keyboard)
@@ -440,6 +454,8 @@ async def _emit(update: Update, context: ContextTypes.DEFAULT_TYPE, *, results: 
 
     changed = bool(created or updated or gcreated or gupdated or dcreated or dupdated)
     asking = bool(ambiguous or deletions)
+    # قبل از ساختِ کارت‌ها، تا کارتِ مشکوک از همان اول هشدار و دکمه‌ی «تکراریه» را داشته باشد.
+    dup_line = duplicate_summary(duplicates_service.flag_new(user_id, created))
 
     memory.remember(user_id, "user", user_mem, weight=weight)
 
@@ -461,6 +477,8 @@ async def _emit(update: Update, context: ContextTypes.DEFAULT_TYPE, *, results: 
     extra = _update_lines(updated, dupdated, gupdated, skip=set(created))
     if extra:
         reply = "\n".join([reply, *extra]).strip() if reply else "\n".join(extra)
+    if dup_line:
+        reply = f"{reply}\n{dup_line}".strip()
     if data_answer:
         reply = f"{reply}\n\n{data_answer}".strip()
     for note in notes:

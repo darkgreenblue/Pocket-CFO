@@ -27,6 +27,7 @@ from bot.db import repo
 from bot.handlers.cards import send_card
 from bot.llm import agent
 from bot.llm.client import LLMUnavailableError
+from bot.services import duplicates
 from bot.services import goals as goals_service
 from bot.services import household as household_service
 from bot.services import memory
@@ -207,6 +208,9 @@ async def _process(bot, user_id: int, request_id: str, text: str,
         await _notify(bot, user_id, TELEGRAM_NOT_EXPENSE.format(text=spoken or "(ویس)"))
         repo.finish_ingest_request(request_id, "nothing", MSG_NOTHING)
         return IngestResult("nothing", MSG_NOTHING)
+
+    # تکراری‌ها (مثلاً همان خرجی که قبلاً از اسکرین‌شاتِ پیامک ثبت شده) فقط علامت می‌خورند.
+    duplicates.flag_new(user_id, result.created)
 
     # ۵) کارت‌ها به تلگرام. اگر نرفت، تراکنش سرِ جایش می‌ماند و job دوره‌ای دوباره
     #    تلاش می‌کند (card_message_id هنوز NULL است).

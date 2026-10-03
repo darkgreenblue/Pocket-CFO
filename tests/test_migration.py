@@ -124,3 +124,13 @@ def test_upgraded_db_supports_the_new_features(legacy_db):
     token = hh.create_invite(USER, "partner", True)
     hh.accept_invite(token, 556, "پارتنر")
     assert hh.is_shared(USER) and len(legacy_db.list_debts(556)) == 1
+
+
+def test_upgrade_adds_duplicate_detection_columns(legacy_db):
+    """تشخیصِ تکراری روی دیتابیسِ قدیمی: ستون‌ها اضافه و رکوردهای قبلی بی‌علامت می‌مانند."""
+    legacy_db.init_db()
+    conn = sqlite3.connect(legacy_db.settings.db_path)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(transactions)")}
+    conn.close()
+    assert {"occurred_on", "duplicate_of"} <= cols
+    assert all(t["duplicate_of"] is None for t in legacy_db.list_user_transactions(USER))

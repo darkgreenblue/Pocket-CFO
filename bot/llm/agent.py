@@ -9,6 +9,7 @@ import base64
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Optional, Union
 
 from bot.config import settings
@@ -19,6 +20,7 @@ from bot.llm.prompts import EXTRACT_SYSTEM, PROFILE_BLOCK, QUERY_SYSTEM, VISION_
 from bot.llm.tools import TOOLS_SPEC, dispatch
 from bot.services import clarify as clarify_service
 from bot.services import debts as debts_service
+from bot.services import duplicates as duplicates_service
 from bot.services import goals as goals_service
 from bot.services import household as household_service
 from bot.services import transactions as txn_service
@@ -340,7 +342,8 @@ async def converse_image(*, image: bytes, mime: str = "image/jpeg", caption: str
                 "note": line.note, "suggested_tags": line.suggested_tags}
         try:
             txn_id = txn_service.create_from_item(user_id, item, transcript=line.raw,
-                                                  source="photo", period=line.period)
+                                                  source="photo", period=line.period,
+                                                  occurred_on=line.occurred_on)
         except Exception:  # noqa: BLE001
             logger.exception("vision: ساختِ تراکنش از ردیفِ عکس ناموفق بود: %r", item)
             continue
@@ -355,8 +358,23 @@ async def converse_image(*, image: bytes, mime: str = "image/jpeg", caption: str
         len(created), incomplete, reading.deposits_ignored, reading.dropped_over_limit,
         reading.check.status if reading.check else None,
     )
-    return AgentResult(reply=vision.summary(reading, len(created), incomplete),
+    basket = _receipt_basket_match(user_id, reading, created)
+    return AgentResult(reply=vision.summary(reading, len(created), incomplete,
+                                            basket_match=basket),
                        transcript=vision.describe(reading, caption), created=created)
+
+
+def _receipt_basket_match(user_id: int, reading, created: list[int]) -> Optional[str]:
+    """جمعِ کلِ رسید با یک تراکنشِ تکیِ قبلی جور است؟ (مثلاً «سوپر ۲ میلیون» با ویس) — فقط هشدار."""
+    if reading.kind != vision.KIND_RECEIPT or not created:
+        return None
+    if any(line.currency != "toman" or line.amount is None for line in reading.lines):
+        return None
+    items_sum = sum(line.amount for line in reading.lines)
+    day = next((date.fromisoformat(ln.occurred_on) for ln in reading.lines if ln.occurred_on), None)
+    match = duplicates_service.receipt_total_match(
+        user_id, [items_sum, reading.payable], exclude=created, on_day=day)
+    return duplicates_service.describe(match) if match else None
 
 
 async def answer_data(user_text: str, history: Optional[list[dict]], user_id: int) -> str:
