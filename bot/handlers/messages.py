@@ -1,9 +1,11 @@
 """هندلر پیام‌های ویس و متن — مکالمه + ثبت/ویرایش + صفِ بعد-از-ساعت‌کاری."""
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
+from typing import Optional
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -220,12 +222,113 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                    force_record=refers_to_record)
 
 
+UNSUPPORTED_MSG = (
+    "ویس، متن یا عکس قابل قبوله 🙂 برای صدا از دکمه‌ی میکروفون ویس بگیر؛ برای ثبت از روی "
+    "رسید یا پیامک‌های بانکی، عکس/اسکرین‌شاتش رو بفرست."
+)
+
+
 async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _authorized(update):
         return
-    await update.message.reply_text(
-        "فقط پیام صوتی (ویس) یا متن قابل قبوله. برای صدا، از دکمه‌ی میکروفون ویس بگیر."
-    )
+    await update.message.reply_text(UNSUPPORTED_MSG)
+
+
+# ---------- عکس (رسید، پیامکِ بانکی، موبایل‌بانک) ----------
+
+# فرمت‌هایی که مدل مستقیم می‌خواند. HEIC (عکسِ پیش‌فرضِ آیفون وقتی «فایل» فرستاده شود)
+# عمداً نیست: پشتیبانی‌اش در OpenRouter تضمینی نیست؛ کاربر می‌تواند همان را «عکس» بفرستد.
+IMAGE_MIMES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+PHOTO_STATUS = "🖼 دارم عکس رو می‌خونم…"
+IMAGE_TOO_BIG = "این فایل خیلی بزرگه 🙏 لطفاً به‌صورت «عکس» بفرست، نه فایل."
+IMAGE_FORMAT_MSG = ("این فرمتِ عکس رو نمی‌تونم بخونم. لطفاً به‌صورت «عکس» بفرست "
+                    "(یا فایلِ JPG/PNG).")
+
+
+def photo_payload(message) -> Optional[tuple[str, str, int]]:
+    """(file_id، نوعِ فایل، حجم) — عکسِ معمولی یا عکسی که به‌صورت «فایل» آمده؛ وگرنه None.
+
+    از عکسِ معمولی بزرگ‌ترین اندازه را برمی‌داریم: برای خواندنِ ردیف‌های ریزِ رسید، کیفیت
+    از هر چیزی مهم‌تر است.
+    """
+    if message.photo:
+        best = message.photo[-1]
+        return best.file_id, "image/jpeg", best.file_size or 0
+    doc = message.document
+    if doc is not None and (doc.mime_type or "").lower() in IMAGE_MIMES:
+        mime = "image/jpeg" if doc.mime_type.lower() == "image/jpg" else doc.mime_type.lower()
+        return doc.file_id, mime, doc.file_size or 0
+    return None
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    payload = photo_payload(update.message)
+    if payload is None:
+        await update.message.reply_text(IMAGE_FORMAT_MSG)
+        return
+    file_id, mime, size = payload
+    if size and size > settings.max_image_bytes:
+        await update.message.reply_text(IMAGE_TOO_BIG)
+        return
+    awaiting = context.user_data.pop(AWAITING_KEY, None)
+    if awaiting:
+        await clear_edit_messages(context.bot, awaiting)
+        await update.message.reply_text("ویرایش قبلی لغو شد؛ این عکس رو پردازش می‌کنم.")
+    # راهنمای نیتِ دکمه‌ها (بدهی/هدف) به عکس ربطی ندارد؛ نباید به پیامِ بعدی نشت کند.
+    context.user_data.pop(INTENT_HINT_KEY, None)
+    if _rate_limited(update.effective_user.id):
+        await update.message.reply_text("یه کم آروم‌تر 🙂 چند لحظه دیگه دوباره بفرست.")
+        return
+    caption = (update.message.caption or "").strip()
+    await _process_photo(update, context, file_id=file_id, mime=mime, caption=caption)
+
+
+async def download_image(bot, file_id: str) -> bytes:
+    tg_file = await bot.get_file(file_id)
+    return bytes(await tg_file.download_as_bytearray())
+
+
+async def _process_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, *,
+                         file_id: str, mime: str, caption: str) -> None:
+    user_id = update.effective_user.id
+
+    if repo.has_pending(user_id) and memory.usage_today(user_id) < settings.daily_llm_limit:
+        try:
+            await pending.flush_pending(context.bot, user_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("flush صف ناموفق بود")
+
+    # بعد از پایانِ سهمیه، عکس هم مثل ویس گم نمی‌شود: file_id در صف می‌ماند تا صبح.
+    if memory.usage_today(user_id) >= settings.daily_llm_limit:
+        repo.add_pending(user_id, "photo", json.dumps(
+            {"file_id": file_id, "mime": mime, "caption": caption}, ensure_ascii=False))
+        await update.message.reply_text(OFF_HOURS_MSG)
+        return
+
+    used = memory.usage_today(user_id)
+    status_msg = await update.message.reply_text(PHOTO_STATUS)
+    try:
+        blob = await download_image(context.bot, file_id)
+        if len(blob) > settings.max_image_bytes:
+            await status_msg.edit_text(IMAGE_TOO_BIG)
+            return
+        result = await agent.converse_image(
+            image=blob, mime=mime, caption=caption, user_id=user_id,
+            allowed_tags=tags_service.allowed_tag_names(repo.get_tags()),
+        )
+    except LLMUnavailableError:
+        await status_msg.edit_text(USER_FACING_UNAVAILABLE)
+        return
+    except Exception:  # noqa: BLE001
+        logger.exception("خطای غیرمنتظره در پردازشِ عکس (user=%s)", user_id)
+        await status_msg.edit_text("یه مشکلی در خوندنِ عکس پیش اومد. دوباره تلاش کن.")
+        return
+
+    await status_msg.delete()
+    await _emit(update, context, results=[result], weight=1,
+                user_mem=result.transcript or "[عکس]", used=used, data_answer="")
 
 
 # ---------- پردازش ----------

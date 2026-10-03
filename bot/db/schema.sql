@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS user_profile (
 CREATE TABLE IF NOT EXISTS pending_inputs (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL,
-    kind       TEXT NOT NULL DEFAULT 'text',   -- text | voice | voice_file
+    kind       TEXT NOT NULL DEFAULT 'text',   -- text | voice | voice_file | photo (JSON)
     content    TEXT NOT NULL,                  -- متن، یا file_id ویس، یا مسیرِ فایلِ ویس
     created_at TEXT NOT NULL
 );

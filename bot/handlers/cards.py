@@ -5,8 +5,11 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Optional
+
+from telegram.error import RetryAfter
 
 from bot.db import repo
 from bot.flows.debt_card import render_debt_card
@@ -37,8 +40,27 @@ def render_debt(debt: dict[str, Any], *, expanded: bool = False):
     return render_debt_card(debt, expanded=expanded, recorder_name=recorder_name(debt))
 
 
+SEND_RETRIES = 2
+
+
 async def _send(bot, chat_id: int, text: str, keyboard):
-    return await bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+    """ارسالِ کارت با احترام به محدودیتِ نرخِ تلگرام.
+
+    یک رسیدِ ۱۵ قلمی یعنی ۱۵ کارتِ پشتِ سرِ هم؛ اگر تلگرام «کمی صبر کن» (RetryAfter) داد،
+    همان‌قدر صبر و دوباره تلاش می‌کنیم — وگرنه چند کارتِ آخر بی‌صدا گم می‌شدند.
+    """
+    for attempt in range(SEND_RETRIES + 1):
+        try:
+            return await bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+        except RetryAfter as exc:
+            if attempt == SEND_RETRIES:
+                raise
+            wait = getattr(exc, "retry_after", 1) or 1
+            if hasattr(wait, "total_seconds"):      # در برخی نسخه‌ها timedelta است
+                wait = wait.total_seconds()
+            logger.warning("تلگرام محدودیتِ نرخ داد؛ %.1f ثانیه صبر و تلاشِ دوباره (chat=%s)",
+                           wait, chat_id)
+            await asyncio.sleep(min(float(wait), 30.0))
 
 
 async def _edit_or_send(bot, row: dict[str, Any], text: str, keyboard, send_again) -> None:

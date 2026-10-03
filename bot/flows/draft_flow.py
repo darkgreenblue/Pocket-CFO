@@ -29,12 +29,17 @@ def transcript_line(txn: dict[str, Any]) -> Optional[str]:
     رونویسی از اول ذخیره می‌شد ولی هیچ‌جا دیده نمی‌شد، و برای فهمیدنِ اینکه مشکلِ یک
     ثبتِ صوتی از شنیدن است یا از استخراج، باید به دیتابیسِ سرور SSH می‌زدیم. حالا
     همان‌جا روی کارت است.
+
+    برای ثبت از روی عکس، همین خط «ردیفِ خامِ روی عکس» است (مثلاً «شیر ۱ لیتری 2 750,000
+    1,500,000»)؛ تا اگر تبدیلِ ریال/تومان یا خواندنِ عدد اشتباه شد، فوراً معلوم باشد.
     """
     text = " ".join((txn.get("transcript") or "").split())
     if not text:
         return None
     if len(text) > TRANSCRIPT_MAX:
         text = text[:TRANSCRIPT_MAX].rstrip() + "…"
+    if txn.get("source") == "photo":
+        return f"🖼 روی عکس: «{text}»"
     return f"🎙 شنیدم: «{text}»"
 
 

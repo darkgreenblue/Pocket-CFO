@@ -62,8 +62,12 @@ def title_from_items(items: list) -> Optional[str]:
 
 
 def create_from_item(user_id: int, item: dict[str, Any], *, transcript: str = "",
-                     source: str = "chat") -> int:
-    """یک تراکنش از آیتم استخراج‌شده‌ی LLM می‌سازد (کامل → confirmed، ناقص → draft)."""
+                     source: str = "chat", period: Optional[tuple[int, int]] = None) -> int:
+    """یک تراکنش از آیتم استخراج‌شده‌ی LLM می‌سازد (کامل → confirmed، ناقص → draft).
+
+    `period` = (سال، ماه)ِ شمسیِ صریح — برای ردیفِ پیامک/رسیدی که تاریخش مالِ ماهِ گذشته
+    است. بر past_month (نامِ ماه از حرفِ کاربر) مقدم است.
+    """
     title = (item.get("title") or "").strip() or None
     if title is None:
         title = title_from_items(item.get("mentioned_items") or [])
@@ -75,7 +79,7 @@ def create_from_item(user_id: int, item: dict[str, Any], *, transcript: str = ""
     status = "confirmed" if complete else "draft"
 
     # ماه شمسی: عادی = ماهِ جاری؛ اگر کاربر به ماهِ گذشته اشاره کرد → همان ماه.
-    past = jalali.resolve_past_month(item.get("past_month") or "")
+    past = period or jalali.resolve_past_month(item.get("past_month") or "")
     jyear, jmonth = past if past else jalali.current_ym()
 
     txn_id = repo.create_transaction(

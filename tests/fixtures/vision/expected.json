@@ -1,0 +1,240 @@
+{
+  "receipt_supermarket_15.png": {
+    "kind": "receipt",
+    "unit": "rial",
+    "store": "فروشگاه زنجیره‌ای نمونه",
+    "date": "1405/07/09",
+    "time": "18:24",
+    "items": [
+      {
+        "name": "شیر کم‌چرب ۱ لیتری",
+        "quantity": 2,
+        "unit_price": 750000,
+        "line_total": 1500000
+      },
+      {
+        "name": "نان بربری",
+        "quantity": 3,
+        "unit_price": 150000,
+        "line_total": 450000
+      },
+      {
+        "name": "برنج ایرانی طارم ۱ کیلویی",
+        "quantity": 1,
+        "unit_price": 1800000,
+        "line_total": 1800000
+      },
+      {
+        "name": "مایع ظرفشویی ۹۰۰ گرمی",
+        "quantity": 1,
+        "unit_price": 900000,
+        "line_total": 900000
+      },
+      {
+        "name": "ماست پرچرب ۹۰۰ گرمی",
+        "quantity": 1,
+        "unit_price": 950000,
+        "line_total": 950000
+      },
+      {
+        "name": "تخم‌مرغ بسته ۱۰ عددی",
+        "quantity": 1,
+        "unit_price": 2400000,
+        "line_total": 2400000
+      },
+      {
+        "name": "گوجه‌فرنگی (کیلو)",
+        "quantity": 0.75,
+        "unit_price": 485000,
+        "line_total": 363750
+      },
+      {
+        "name": "پنیر سفید یواف ۴۰۰ گرمی",
+        "quantity": 1,
+        "unit_price": 1350000,
+        "line_total": 1350000
+      },
+      {
+        "name": "روغن آفتابگردان ۸۱۰ گرمی",
+        "quantity": 1,
+        "unit_price": 1650000,
+        "line_total": 1650000
+      },
+      {
+        "name": "ماکارونی ۵۰۰ گرمی",
+        "quantity": 2,
+        "unit_price": 620000,
+        "line_total": 1240000
+      },
+      {
+        "name": "چای خشک ۴۵۰ گرمی",
+        "quantity": 1,
+        "unit_price": 3900000,
+        "line_total": 3900000
+      },
+      {
+        "name": "شکر سفید ۹۰۰ گرمی",
+        "quantity": 1,
+        "unit_price": 780000,
+        "line_total": 780000
+      },
+      {
+        "name": "دستمال کاغذی ۱۰۰ برگ",
+        "quantity": 3,
+        "unit_price": 420000,
+        "line_total": 1260000
+      },
+      {
+        "name": "رب گوجه‌فرنگی ۸۰۰ گرمی",
+        "quantity": 1,
+        "unit_price": 1150000,
+        "line_total": 1150000
+      },
+      {
+        "name": "پودر لباسشویی ۵۰۰ گرمی",
+        "quantity": 1,
+        "unit_price": 1450000,
+        "line_total": 1450000
+      }
+    ],
+    "subtotal": 21143750,
+    "discount": 500000,
+    "tax": 2064375,
+    "payable": 22708125
+  },
+  "receipt_cafe_no_unit.png": {
+    "kind": "receipt",
+    "unit": "rial",
+    "unit_printed": false,
+    "store": "کافه نمونه",
+    "date": "1405/07/09",
+    "time": "10:15",
+    "items": [
+      {
+        "name": "کاپوچینو",
+        "quantity": 2,
+        "unit_price": 1850000,
+        "line_total": 3700000
+      },
+      {
+        "name": "کروسان کره‌ای",
+        "quantity": 1,
+        "unit_price": 1200000,
+        "line_total": 1200000
+      },
+      {
+        "name": "چای ماسالا",
+        "quantity": 1,
+        "unit_price": 1400000,
+        "line_total": 1400000
+      },
+      {
+        "name": "کیک شکلاتی",
+        "quantity": 1,
+        "unit_price": 1650000,
+        "line_total": 1650000
+      },
+      {
+        "name": "آب معدنی کوچک",
+        "quantity": 2,
+        "unit_price": 250000,
+        "line_total": 500000
+      }
+    ],
+    "subtotal": 8450000,
+    "payable": 8450000
+  },
+  "bank_sms_list.png": {
+    "kind": "bank_sms",
+    "unit": "rial",
+    "bank": "بانک نمونه",
+    "account": "1234**5678",
+    "withdrawals": [
+      {
+        "amount": 640000,
+        "date": "1405/07/08",
+        "time": "09:15",
+        "description": "خرید",
+        "balance_after": 40870000
+      },
+      {
+        "amount": 3800000,
+        "date": "1405/07/08",
+        "time": "20:47",
+        "description": "انتقال",
+        "balance_after": 37070000
+      },
+      {
+        "amount": 12500000,
+        "date": "1405/07/09",
+        "time": "11:05",
+        "description": null,
+        "balance_after": 49570000
+      },
+      {
+        "amount": 1250000,
+        "date": "1405/07/09",
+        "time": "13:42",
+        "description": "خرید",
+        "balance_after": 48320000
+      }
+    ],
+    "deposits": [
+      {
+        "amount": 25000000,
+        "date": "1405/07/09",
+        "time": "08:30",
+        "description": null,
+        "balance_after": 62070000
+      }
+    ]
+  },
+  "mobile_bank_history.png": {
+    "kind": "bank_app",
+    "unit": "rial",
+    "balance": 216320000,
+    "withdrawals": [
+      {
+        "amount": 6200000,
+        "description": "خرید کارتخوان - رستوران نمونه",
+        "date": "1405/07/08",
+        "time": "21:10"
+      },
+      {
+        "amount": 7960000,
+        "description": "خرید اینترنتی - دیجی‌کالا",
+        "date": "1405/07/06",
+        "time": "23:05"
+      },
+      {
+        "amount": 1870000,
+        "description": "پرداخت قبض برق",
+        "date": "1405/07/04",
+        "time": "09:48"
+      },
+      {
+        "amount": 15000000,
+        "description": "کارت به کارت",
+        "date": "1405/07/03",
+        "time": "17:26"
+      }
+    ],
+    "deposits": [
+      {
+        "amount": 20000000,
+        "description": "انتقال از حساب دیگر",
+        "date": "1405/07/07",
+        "time": "10:32"
+      },
+      {
+        "amount": 185000000,
+        "description": "واریز حقوق",
+        "date": "1405/07/01",
+        "time": "08:00"
+      }
+    ]
+  },
+  "not_financial.png": {
+    "kind": "not_financial"
+  }
+}
